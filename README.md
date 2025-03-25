@@ -1,67 +1,63 @@
 # Resource Flow
 
-A lightweight, responsive resource planning application that helps teams manage resource allocation and track demand fulfillment with intuitive visualizations.
+A lightweight, responsive, and informative resource planning application built with Streamlit, DuckDB, and Polars.
 
 ## Features
 
-- **Resource Management**: Track people, teams, and their allocations
-- **Project Planning**: Manage projects and their resource demands
-- **Time-Based Visualization**: View allocations and demand fulfillment over time
-- **FTE Analysis**: Calculate and visualize Full-Time Equivalent metrics
-- **Responsive Dashboard**: Get quick insights into resource utilization
+- Dashboard with time-resolved plots
+- Team management
+- Project management
+- Resource demand tracking
+- Resource allocation tracking
+- Visualizations for resource planning
 
-## Tech Stack
+## Installation
 
-- **Frontend**: Streamlit
-- **Database**: DuckDB
-- **Data Processing**: Polars
-- **Package Management**: uv
-- **Visualization**: Plotly, Altair
+1. Clone the repository:
+```
+git clone https://github.com/yourusername/resource-flow.git
+cd resource-flow
+```
 
-## Getting Started
+2. Create a virtual environment and activate it:
+```
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
 
-### Prerequisites
+3. Install the dependencies:
+```
+pip install -r requirements.txt
+```
 
-- Python 3.9+
-- uv package manager
+## Running the Application
 
-### Installation
+You can run the application in one of two ways:
 
-1. Clone this repository:
-   ```
-   git clone <repository-url>
-   cd resource-flow
-   ```
+### Option 1: Using the run script (recommended)
 
-2. Create and activate the virtual environment:
-   ```
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
+```
+./run.py
+```
 
-3. Install dependencies:
-   ```
-   uv pip install -r requirements.txt
-   ```
+### Option 2: Using Streamlit directly
 
-4. Run the application:
-   ```
-   streamlit run app/main.py
-   ```
+```
+# Make sure you're in the project root directory
+python -m streamlit run app/main.py
+```
 
-## Development
+The application will open in your default web browser at http://localhost:8501.
 
-See the [PROJECT_PLAN.md](PROJECT_PLAN.md) file for a detailed development plan and application structure.
+## Data Structure
 
-## Data Model
+The application uses the following data models:
 
-The application uses the following data model:
-
-- **People**: Resource information and capacity
-- **Teams**: Organizational structure
-- **Projects**: Work initiatives requiring resources
-- **Demand**: Resource requirements for projects
-- **Allocations**: Assignment of people to projects
+- People: Resource people with skills and team assignments
+- Teams: Groups of people
+- Projects: Projects with timeline and status
+- Demands: Resource demands for projects
+- Allocations: Resource allocations to projects
 
 ## Contributing
 

@@ -1,5 +1,10 @@
 import streamlit as st
 import os
+import sys
+
+# Add the parent directory to the Python path so 'app' can be found
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from datetime import date, timedelta
 
 from app.components.people_view import render_people_view
