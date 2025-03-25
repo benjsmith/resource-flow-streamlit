@@ -2,18 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-from app.database.queries import DatabaseQueries
-from app.database.models import Demand
+from app.database import queries as db
+from app.models.data_models import Demand
 from app.visualizations.gantt_chart import create_demand_gantt
 
 def render_demand_view():
     """
     Render the demand management view
     """
-    # Set up database connection
-    db_path = "resource_flow.duckdb"
-    db = DatabaseQueries(db_path)
-    
     st.header("Resource Demand Management")
     
     # Create tabs for different actions
