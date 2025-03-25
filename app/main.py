@@ -40,8 +40,16 @@ if 'date_range' not in st.session_state:
     # Default to current month plus 11 months (1 year view)
     today = date.today()
     start_date = date(today.year, today.month, 1)
-    end_date = date(today.year + 1 if today.month == 12 else today.year, 
-                   1 if today.month == 12 else today.month + 11, 1) - timedelta(days=1)
+    
+    # Calculate end date by adding 11 months
+    if today.month <= 1:  # January
+        end_year = today.year
+        end_month = 12
+    else:
+        end_year = today.year + (today.month + 10) // 12
+        end_month = (today.month + 10) % 12 + 1
+    
+    end_date = date(end_year, end_month, 1) - timedelta(days=1)
     st.session_state.date_range = (start_date, end_date)
 
 # Main function
