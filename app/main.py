@@ -1,11 +1,10 @@
 import streamlit as st
 import os
 import sys
+from datetime import date, timedelta
 
 # Add the parent directory to the Python path so 'app' can be found
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from datetime import date, timedelta
 
 from app.components.people_view import render_people_view
 from app.components.teams_view import render_teams_view
@@ -14,91 +13,121 @@ from app.components.demand_view import render_demand_view
 from app.components.allocations_view import render_allocations_view
 from app.components.dashboard import render_dashboard
 from app.database.init_db import initialize_database
+from app.database.migrate_db import migrate_database
 
-# Set page config
-st.set_page_config(
-    page_title="Resource Flow",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Initialize session state variables if they don't exist
-if 'selected_view' not in st.session_state:
-    st.session_state.selected_view = 'Dashboard'
-if 'edit_person_id' not in st.session_state:
-    st.session_state.edit_person_id = None
-if 'edit_team_id' not in st.session_state:
-    st.session_state.edit_team_id = None
-if 'edit_project_id' not in st.session_state:
-    st.session_state.edit_project_id = None
-if 'edit_demand_id' not in st.session_state:
-    st.session_state.edit_demand_id = None
-if 'edit_allocation_id' not in st.session_state:
-    st.session_state.edit_allocation_id = None
-if 'date_range' not in st.session_state:
-    # Default to current month plus 11 months (1 year view)
-    today = date.today()
-    start_date = date(today.year, today.month, 1)
-    
-    # Calculate end date by adding 11 months
-    if today.month <= 1:  # January
-        end_year = today.year
-        end_month = 12
-    else:
-        end_year = today.year + (today.month + 10) // 12
-        end_month = (today.month + 10) % 12 + 1
-    
-    end_date = date(end_year, end_month, 1) - timedelta(days=1)
-    st.session_state.date_range = (start_date, end_date)
-
-# Main function
-def main():
-    # Initialize database if it doesn't exist
-    db_path = "resource_flow.duckdb"
-    if not os.path.exists(db_path):
+def check_database_initialization():
+    """Check if the database is initialized and initialize if it doesn't exist."""
+    if not os.path.exists("resource_flow.duckdb"):
         initialize_database()
     
-    # Sidebar
+    # Run database migrations
+    migrate_database()
+
+def setup_session_state():
+    """Initialize session state variables."""
+    # Default date range for filters (6 months)
+    if "date_range" not in st.session_state:
+        today = date.today()
+        start_date = date(today.year, today.month, 1)  # First day of current month
+        end_date = date(today.year + 1 if today.month == 12 else today.year,
+                        1 if today.month == 12 else today.month + 6,
+                        1) - timedelta(days=1)  # Last day of 6 months from now
+        st.session_state.date_range = (start_date, end_date)
+    
+    # Default sidebar selection
+    if "sidebar_selection" not in st.session_state:
+        st.session_state.sidebar_selection = "Dashboard"
+
+def create_sidebar():
+    """Create the sidebar navigation menu."""
     with st.sidebar:
         st.title("Resource Flow")
-        st.markdown("---")
+        
+        # Date range selector
+        st.header("Date Range")
+        start_date = st.date_input("Start Date", value=st.session_state.date_range[0])
+        end_date = st.date_input("End Date", value=st.session_state.date_range[1])
+        
+        # Update date range in session state
+        if start_date > end_date:
+            st.error("Start date must be before end date")
+        else:
+            st.session_state.date_range = (start_date, end_date)
         
         # Navigation menu
-        options = ["Dashboard", "People", "Teams", "Projects", "Demand", "Allocations"]
-        selected = st.radio("Navigation", options, index=options.index(st.session_state.selected_view))
-        st.session_state.selected_view = selected
+        st.header("Navigation")
+        options = ["Dashboard", "Projects", "People", "Teams", "Demands", "Allocations"]
         
-        st.markdown("---")
+        selection = st.radio("Go to", options, key="sidebar_nav", index=options.index(st.session_state.sidebar_selection))
         
-        # Date range selector in sidebar
-        st.subheader("Date Range")
-        start_date, end_date = st.session_state.date_range
+        # Update sidebar selection in session state
+        st.session_state.sidebar_selection = selection
         
-        col1, col2 = st.columns(2)
-        with col1:
-            new_start_date = st.date_input("Start Date", start_date)
-        with col2:
-            new_end_date = st.date_input("End Date", end_date)
+        # App info
+        st.sidebar.markdown("---")
+        st.sidebar.info("Resource Flow: A resource planning and management application.")
         
-        if new_start_date and new_end_date and new_start_date <= new_end_date:
-            st.session_state.date_range = (new_start_date, new_end_date)
-        
-        st.markdown("---")
-        st.caption("Resource Flow v1.0.0")
+        # About/Help button
+        if st.sidebar.button("Help & Documentation"):
+            st.session_state.show_help = True
+
+def main():
+    """Main function to run the Streamlit app."""
+    # Check if the database exists and initialize if needed
+    check_database_initialization()
     
-    # Main content based on selected view
-    if st.session_state.selected_view == "Dashboard":
+    # Set up the session state
+    setup_session_state()
+    
+    # Set page configuration
+    st.set_page_config(
+        page_title="Resource Flow",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Create the sidebar
+    create_sidebar()
+    
+    # Show help dialog if requested
+    if st.session_state.get("show_help", False):
+        with st.expander("Help & Documentation", expanded=True):
+            st.markdown("""
+            # Resource Flow Help
+            
+            ## Overview
+            Resource Flow is a tool for planning and managing resources across projects.
+            
+            ## Features
+            - **Dashboard**: Overview of resource allocation, demand, and status
+            - **Projects**: Manage projects and their timelines
+            - **People**: Manage team members and their skills
+            - **Teams**: Organize people into teams
+            - **Demands**: Track resource demands for projects
+            - **Allocations**: Assign people to projects to fulfill demands
+            
+            ## Tips
+            - Use the date range selector to filter data by time period
+            - Click on items in tables to select them for actions
+            - Add new items using the "Add" buttons or tabs
+            """)
+            if st.button("Close Help"):
+                st.session_state.show_help = False
+                st.rerun()
+    
+    # Render the selected view
+    if st.session_state.sidebar_selection == "Dashboard":
         render_dashboard()
-    elif st.session_state.selected_view == "People":
-        render_people_view()
-    elif st.session_state.selected_view == "Teams":
-        render_teams_view()
-    elif st.session_state.selected_view == "Projects":
+    elif st.session_state.sidebar_selection == "Projects":
         render_projects_view()
-    elif st.session_state.selected_view == "Demand":
+    elif st.session_state.sidebar_selection == "People":
+        render_people_view()
+    elif st.session_state.sidebar_selection == "Teams":
+        render_teams_view()
+    elif st.session_state.sidebar_selection == "Demands":
         render_demand_view()
-    elif st.session_state.selected_view == "Allocations":
+    elif st.session_state.sidebar_selection == "Allocations":
         render_allocations_view()
 
 if __name__ == "__main__":

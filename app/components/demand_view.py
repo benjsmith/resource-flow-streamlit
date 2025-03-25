@@ -44,7 +44,7 @@ def render_demand_view():
             status_filter = None if selected_status == "All" else selected_status
         
         # Get demands based on filters
-        demands = db.get_demands(project_id=selected_project_id, status_filter=status_filter)
+        demands = db.get_demands(project_id=selected_project_id, status=status_filter)
         
         # Get project names for display
         project_map = {project.id: project.name for project in projects}
@@ -57,7 +57,7 @@ def render_demand_view():
                     "ID": demand.id,
                     "Project": project_map.get(demand.project_id, "Unknown"),
                     "Role Required": demand.role_required,
-                    "Skills Required": demand.skills_required,
+                    "Skills Required": ", ".join(demand.skills_required) if demand.skills_required else "",
                     "FTE Required": demand.fte_required,
                     "Start Date": demand.start_date,
                     "End Date": demand.end_date,
@@ -132,8 +132,19 @@ def render_demand_view():
             # Editing an existing demand
             demand = db.get_demand(st.session_state.edit_demand_id)
             if not demand:
-                st.error("Demand not found")
-                return
+                st.error(f"Demand #{st.session_state.edit_demand_id} not found")
+                del st.session_state.edit_demand_id
+                demand = Demand(
+                    id=None, 
+                    project_id=None,
+                    role_required="", 
+                    skills_required=[], 
+                    fte_required=1.0, 
+                    start_date=date.today(), 
+                    end_date=date.today() + timedelta(days=90), 
+                    priority="medium",
+                    status="unfilled"
+                )
             editing = True
         else:
             # Creating a new demand
@@ -142,7 +153,7 @@ def render_demand_view():
                 id=None, 
                 project_id=None,
                 role_required="", 
-                skills_required="", 
+                skills_required=[], 
                 fte_required=1.0, 
                 start_date=today, 
                 end_date=today + timedelta(days=90), 
@@ -182,7 +193,16 @@ def render_demand_view():
                         break
             
             role_required = st.text_input("Role Required", value=demand.role_required or "")
-            skills_required = st.text_area("Skills Required", value=demand.skills_required or "", height=100)
+            
+            # Convert skills list to string for display and back to list for saving
+            skills_text = ", ".join(demand.skills_required) if demand.skills_required else ""
+            skills_required = st.text_area(
+                "Skills Required (comma-separated)", 
+                value=skills_text,
+                height=100,
+                help="Enter skills separated by commas"
+            )
+            
             fte_required = st.number_input("FTE Required", min_value=0.1, max_value=10.0, value=demand.fte_required or 1.0, step=0.1)
             
             col1, col2 = st.columns(2)
@@ -207,91 +227,65 @@ def render_demand_view():
                     index=["unfilled", "partially_filled", "filled"].index(demand.status or "unfilled")
                 )
             
-            if editing:
-                submit_label = "Update Demand"
-            else:
-                submit_label = "Add Demand"
+            # Add save button
+            save_clicked = st.form_submit_button("Save Demand")
             
-            submitted = st.form_submit_button(submit_label)
-            
-            if submitted:
-                # Validate dates
-                if end_date < start_date:
-                    st.error("End date must be after start date")
-                elif not demand.project_id:
-                    st.error("Please select a project")
+            if save_clicked:
+                # Validate input
+                if not role_required:
+                    st.error("Role Required is required")
+                    return
+                
+                if start_date > end_date:
+                    st.error("Start Date must be before End Date")
+                    return
+                
+                # Convert skills text back to list
+                skills_list = [skill.strip() for skill in skills_required.split(",") if skill.strip()]
+                
+                # Create or update demand object
+                demand = Demand(
+                    id=demand.id,
+                    project_id=demand.project_id,
+                    role_required=role_required,
+                    skills_required=skills_list,
+                    fte_required=fte_required,
+                    start_date=start_date,
+                    end_date=end_date,
+                    priority=priority,
+                    status=status
+                )
+                
+                # Save demand
+                demand_id = db.save_demand(demand)
+                
+                if editing:
+                    st.success(f"Demand #{demand_id} updated successfully!")
+                    del st.session_state.edit_demand_id
                 else:
-                    # Update demand object
-                    demand.role_required = role_required
-                    demand.skills_required = skills_required
-                    demand.fte_required = fte_required
-                    demand.start_date = start_date
-                    demand.end_date = end_date
-                    demand.priority = priority
-                    demand.status = status
-                    
-                    # Save to database
-                    saved_demand = db.save_demand(demand)
-                    
-                    if saved_demand:
-                        # Update the monthly demand allocation table
-                        db.update_monthly_allocations()
-                        
-                        if editing:
-                            st.success(f"Demand updated successfully")
-                        else:
-                            st.success(f"Demand added successfully")
-                        
-                        # Clear the edit demand ID
-                        if "edit_demand_id" in st.session_state:
-                            del st.session_state.edit_demand_id
-                    else:
-                        st.error("Error saving demand")
+                    st.success(f"Demand #{demand_id} created successfully!")
+                
+                # Clear the form
+                st.rerun()
     
     with tab3:
         st.subheader("Demand Timeline")
         
-        # Get demands for Gantt chart
+        # Get all demands for visualization
         demands = db.get_demands()
         
         if demands:
-            # Get project names
-            projects = db.get_projects()
-            project_map = {project.id: project.name for project in projects}
-            
-            # Convert to DataFrame for Gantt chart
-            demands_data = []
-            for demand in demands:
-                demands_data.append({
-                    "id": demand.id,
-                    "project_id": demand.project_id,
-                    "project_name": project_map.get(demand.project_id, "Unknown"),
-                    "role_required": demand.role_required or "Unspecified Role",
-                    "skills_required": demand.skills_required or "",
-                    "fte_required": demand.fte_required,
-                    "start_date": demand.start_date,
-                    "end_date": demand.end_date,
-                    "status": demand.status,
-                    "priority": demand.priority
-                })
-            
-            df_demands = pd.DataFrame(demands_data)
-            
             # Create Gantt chart
-            if not df_demands.empty and "start_date" in df_demands.columns and "end_date" in df_demands.columns:
-                fig = create_demand_gantt(df_demands)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Add legend explanation
-                st.markdown("""
-                **Legend:**
-                - **Red**: Unfilled demand
-                - **Orange**: Partially filled demand
-                - **Green**: Filled demand
-                
-                *Bar width represents FTE amount*
-                """)
-            else:
-                st.info("Demand data is incomplete. Please ensure all demands have start and end dates.")
+            fig = create_demand_gantt(demands)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Add legend explanation
+            st.markdown("""
+            **Legend:**
+            - 🔴 Open - No resources allocated
+            - 🟠 Partially Filled - Some resources allocated
+            - 🟢 Filled - All required resources allocated
+            - ⚫ Cancelled - Demand no longer needed
+            """)
         else:
             st.info("No demands found. Please add some demands to see the timeline.") 

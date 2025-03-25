@@ -1,7 +1,10 @@
 import duckdb
 import os
+import time
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict, Any, Tuple
+from functools import wraps
+import contextlib
 
 from app.models.data_models import (
     Person,
@@ -13,15 +16,67 @@ from app.models.data_models import (
     TeamAllocation
 )
 
-# Database connection
-def get_db_connection():
-    """Get a connection to the DuckDB database."""
+@contextlib.contextmanager
+def get_db_connection(read_only: bool = False):
+    """
+    Get a connection to the DuckDB database.
+    
+    Args:
+        read_only: Whether to open the connection in read-only mode
+        
+    Returns:
+        DuckDB connection
+    """
     db_path = "resource_flow.duckdb"
-    conn = duckdb.connect(db_path)
-    return conn
+    max_retries = 3
+    retry_delay = 0.1  # seconds
+    conn = None
+    
+    for attempt in range(max_retries):
+        try:
+            conn = duckdb.connect(db_path, read_only=read_only)
+            break
+        except duckdb.IOException as e:
+            if "Conflicting lock" in str(e) and attempt < max_retries - 1:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                continue
+            raise
+    
+    if not conn:
+        raise duckdb.IOException("Failed to establish database connection after retries")
+        
+    try:
+        yield conn
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+def with_connection(read_only: bool = False):
+    """
+    Decorator to handle database connections.
+    
+    Args:
+        read_only: Whether to open the connection in read-only mode
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with get_db_connection(read_only=read_only) as conn:
+                return func(conn, *args, **kwargs)
+        return wrapper
+    return decorator
 
 # People queries
-def get_people(team_id: Optional[int] = None) -> List[Person]:
+@with_connection(read_only=True)
+def get_people(conn, team_id: Optional[int] = None) -> List[Person]:
     """
     Get all people, optionally filtered by team_id.
     
@@ -31,8 +86,6 @@ def get_people(team_id: Optional[int] = None) -> List[Person]:
     Returns:
         List of Person objects
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             p.id, 
@@ -53,7 +106,6 @@ def get_people(team_id: Optional[int] = None) -> List[Person]:
     query += " ORDER BY p.name"
     
     result = conn.execute(query, params).fetchall()
-    conn.close()
     
     people = []
     for row in result:
@@ -68,7 +120,8 @@ def get_people(team_id: Optional[int] = None) -> List[Person]:
     
     return people
 
-def get_person(person_id: int) -> Optional[Person]:
+@with_connection(read_only=True)
+def get_person(conn, person_id: int) -> Optional[Person]:
     """
     Get a person by ID.
     
@@ -78,8 +131,6 @@ def get_person(person_id: int) -> Optional[Person]:
     Returns:
         Person object if found, None otherwise
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             p.id, 
@@ -94,7 +145,6 @@ def get_person(person_id: int) -> Optional[Person]:
     """
     
     result = conn.execute(query, [person_id]).fetchone()
-    conn.close()
     
     if result:
         return Person(
@@ -108,7 +158,8 @@ def get_person(person_id: int) -> Optional[Person]:
     
     return None
 
-def save_person(person: Person) -> int:
+@with_connection()
+def save_person(conn, person: Person) -> int:
     """
     Save a person to the database.
     
@@ -118,11 +169,21 @@ def save_person(person: Person) -> int:
     Returns:
         The ID of the saved person
     """
-    conn = get_db_connection()
-    
     skills_str = ",".join(person.skills) if person.skills else ""
     
     if person.id:
+        # Check if person has allocations before updating team
+        current_person = get_person(person.id)
+        if current_person and current_person.team_id != person.team_id:
+            has_allocations = conn.execute(
+                "SELECT COUNT(*) FROM allocations WHERE person_id = ?", 
+                [person.id]
+            ).fetchone()[0]
+            
+            if has_allocations > 0:
+                # Keep the existing team_id if person has allocations
+                person.team_id = current_person.team_id
+        
         # Update existing person
         query = """
             UPDATE people
@@ -141,7 +202,6 @@ def save_person(person: Person) -> int:
         result = conn.execute(query, [person.name, person.role, skills_str, person.team_id]).fetchone()
         person_id = result[0]
     
-    conn.close()
     return person_id
 
 def delete_person(person_id: int) -> bool:
@@ -171,28 +231,16 @@ def delete_person(person_id: int) -> bool:
     conn.close()
     return True
 
-def get_total_people_count() -> int:
-    """
-    Get the total number of people in the database.
-    
-    Returns:
-        Total number of people
-    """
-    conn = get_db_connection()
+@with_connection(read_only=True)
+def get_total_people_count(conn) -> int:
+    """Get the total number of people in the database."""
     count = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
-    conn.close()
     return count
 
 # Teams queries
-def get_teams() -> List[Team]:
-    """
-    Get all teams.
-    
-    Returns:
-        List of Team objects
-    """
-    conn = get_db_connection()
-    
+@with_connection(read_only=True)
+def get_teams(conn) -> List[Team]:
+    """Get all teams."""
     query = """
         SELECT id, name, description
         FROM teams
@@ -200,7 +248,6 @@ def get_teams() -> List[Team]:
     """
     
     result = conn.execute(query).fetchall()
-    conn.close()
     
     teams = []
     for row in result:
@@ -212,18 +259,9 @@ def get_teams() -> List[Team]:
     
     return teams
 
-def get_team(team_id: int) -> Optional[Team]:
-    """
-    Get a team by ID.
-    
-    Args:
-        team_id: The ID of the team to retrieve
-        
-    Returns:
-        Team object if found, None otherwise
-    """
-    conn = get_db_connection()
-    
+@with_connection(read_only=True)
+def get_team(conn, team_id: int) -> Optional[Team]:
+    """Get a team by ID."""
     query = """
         SELECT id, name, description
         FROM teams
@@ -231,7 +269,6 @@ def get_team(team_id: int) -> Optional[Team]:
     """
     
     result = conn.execute(query, [team_id]).fetchone()
-    conn.close()
     
     if result:
         return Team(
@@ -242,18 +279,9 @@ def get_team(team_id: int) -> Optional[Team]:
     
     return None
 
-def save_team(team: Team) -> int:
-    """
-    Save a team to the database.
-    
-    Args:
-        team: The Team object to save
-        
-    Returns:
-        The ID of the saved team
-    """
-    conn = get_db_connection()
-    
+@with_connection()
+def save_team(conn, team: Team) -> int:
+    """Save a team to the database."""
     if team.id:
         # Update existing team
         query = """
@@ -273,21 +301,11 @@ def save_team(team: Team) -> int:
         result = conn.execute(query, [team.name, team.description]).fetchone()
         team_id = result[0]
     
-    conn.close()
     return team_id
 
-def delete_team(team_id: int) -> bool:
-    """
-    Delete a team from the database.
-    
-    Args:
-        team_id: The ID of the team to delete
-        
-    Returns:
-        True if the team was deleted, False otherwise
-    """
-    conn = get_db_connection()
-    
+@with_connection()
+def delete_team(conn, team_id: int) -> bool:
+    """Delete a team from the database."""
     # Check if team has members
     has_members = conn.execute(
         "SELECT COUNT(*) FROM people WHERE team_id = ?", 
@@ -295,27 +313,15 @@ def delete_team(team_id: int) -> bool:
     ).fetchone()[0]
     
     if has_members > 0:
-        conn.close()
         return False
     
     # Delete team
     conn.execute("DELETE FROM teams WHERE id = ?", [team_id])
-    conn.close()
     return True
 
-def get_team_allocations(start_date: date, end_date: date) -> List[TeamAllocation]:
-    """
-    Get team allocations for the specified date range.
-    
-    Args:
-        start_date: Start date for allocations
-        end_date: End date for allocations
-        
-    Returns:
-        List of TeamAllocation objects
-    """
-    conn = get_db_connection()
-    
+@with_connection(read_only=True)
+def get_team_allocations(conn, start_date: date, end_date: date) -> List[TeamAllocation]:
+    """Get team allocations for the specified date range."""
     query = """
     WITH team_capacity AS (
         SELECT 
@@ -349,7 +355,6 @@ def get_team_allocations(start_date: date, end_date: date) -> List[TeamAllocatio
     """
     
     result = conn.execute(query, [end_date, start_date]).fetchall()
-    conn.close()
     
     team_allocations = []
     for row in result:
@@ -363,18 +368,9 @@ def get_team_allocations(start_date: date, end_date: date) -> List[TeamAllocatio
     return team_allocations
 
 # Projects queries
-def get_projects(status: Optional[str] = None) -> List[Project]:
-    """
-    Get all projects, optionally filtered by status.
-    
-    Args:
-        status: Optional status to filter by
-        
-    Returns:
-        List of Project objects
-    """
-    conn = get_db_connection()
-    
+@with_connection(read_only=True)
+def get_projects(conn, status: Optional[str] = None) -> List[Project]:
+    """Get all projects, optionally filtered by status."""
     query = """
         SELECT id, name, description, start_date, end_date, status
         FROM projects
@@ -388,7 +384,6 @@ def get_projects(status: Optional[str] = None) -> List[Project]:
     query += " ORDER BY start_date DESC"
     
     result = conn.execute(query, params).fetchall()
-    conn.close()
     
     projects = []
     for row in result:
@@ -403,7 +398,8 @@ def get_projects(status: Optional[str] = None) -> List[Project]:
     
     return projects
 
-def get_project(project_id: int) -> Optional[Project]:
+@with_connection(read_only=True)
+def get_project(conn, project_id: int) -> Optional[Project]:
     """
     Get a project by ID.
     
@@ -413,8 +409,6 @@ def get_project(project_id: int) -> Optional[Project]:
     Returns:
         Project object if found, None otherwise
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT id, name, description, start_date, end_date, status
         FROM projects
@@ -422,7 +416,6 @@ def get_project(project_id: int) -> Optional[Project]:
     """
     
     result = conn.execute(query, [project_id]).fetchone()
-    conn.close()
     
     if result:
         return Project(
@@ -436,7 +429,8 @@ def get_project(project_id: int) -> Optional[Project]:
     
     return None
 
-def save_project(project: Project) -> int:
+@with_connection()
+def save_project(conn, project: Project) -> int:
     """
     Save a project to the database.
     
@@ -446,8 +440,6 @@ def save_project(project: Project) -> int:
     Returns:
         The ID of the saved project
     """
-    conn = get_db_connection()
-    
     if project.id:
         # Update existing project
         query = """
@@ -480,10 +472,10 @@ def save_project(project: Project) -> int:
         ]).fetchone()
         project_id = result[0]
     
-    conn.close()
     return project_id
 
-def delete_project(project_id: int) -> bool:
+@with_connection()
+def delete_project(conn, project_id: int) -> bool:
     """
     Delete a project from the database.
     
@@ -493,8 +485,6 @@ def delete_project(project_id: int) -> bool:
     Returns:
         True if the project was deleted, False otherwise
     """
-    conn = get_db_connection()
-    
     # Check if project has demands or allocations
     has_dependencies = conn.execute("""
         SELECT 
@@ -503,30 +493,28 @@ def delete_project(project_id: int) -> bool:
     """, [project_id, project_id]).fetchone()[0]
     
     if has_dependencies > 0:
-        conn.close()
         return False
     
     # Delete project
     conn.execute("DELETE FROM projects WHERE id = ?", [project_id])
-    conn.close()
     return True
 
-def get_active_projects_count() -> int:
+@with_connection(read_only=True)
+def get_active_projects_count(conn) -> int:
     """
     Get the count of active projects.
     
     Returns:
         Count of active projects
     """
-    conn = get_db_connection()
     count = conn.execute(
         "SELECT COUNT(*) FROM projects WHERE status IN ('active', 'planning')"
     ).fetchone()[0]
-    conn.close()
     return count
 
 # Demand queries
-def get_demands(project_id: Optional[int] = None, status: Optional[str] = None) -> List[Demand]:
+@with_connection(read_only=True)
+def get_demands(conn, project_id: Optional[int] = None, status: Optional[str] = None) -> List[Demand]:
     """
     Get all demands, optionally filtered by project_id and status.
     
@@ -537,8 +525,6 @@ def get_demands(project_id: Optional[int] = None, status: Optional[str] = None) 
     Returns:
         List of Demand objects
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             d.id, 
@@ -572,7 +558,6 @@ def get_demands(project_id: Optional[int] = None, status: Optional[str] = None) 
     query += " ORDER BY d.priority DESC, d.start_date"
     
     result = conn.execute(query, params).fetchall()
-    conn.close()
     
     demands = []
     for row in result:
@@ -591,7 +576,8 @@ def get_demands(project_id: Optional[int] = None, status: Optional[str] = None) 
     
     return demands
 
-def get_demand(demand_id: int) -> Optional[Demand]:
+@with_connection(read_only=True)
+def get_demand(conn, demand_id: int) -> Optional[Demand]:
     """
     Get a demand by ID.
     
@@ -601,8 +587,6 @@ def get_demand(demand_id: int) -> Optional[Demand]:
     Returns:
         Demand object if found, None otherwise
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             d.id, 
@@ -621,7 +605,6 @@ def get_demand(demand_id: int) -> Optional[Demand]:
     """
     
     result = conn.execute(query, [demand_id]).fetchone()
-    conn.close()
     
     if result:
         return Demand(
@@ -639,7 +622,8 @@ def get_demand(demand_id: int) -> Optional[Demand]:
     
     return None
 
-def save_demand(demand: Demand) -> int:
+@with_connection()
+def save_demand(conn, demand: Demand) -> int:
     """
     Save a demand to the database.
     
@@ -649,8 +633,6 @@ def save_demand(demand: Demand) -> int:
     Returns:
         The ID of the saved demand
     """
-    conn = get_db_connection()
-    
     skills_str = ",".join(demand.skills_required) if demand.skills_required else ""
     
     if demand.id:
@@ -699,10 +681,10 @@ def save_demand(demand: Demand) -> int:
     # Update monthly allocations
     update_monthly_allocations()
     
-    conn.close()
     return demand_id
 
-def delete_demand(demand_id: int) -> bool:
+@with_connection()
+def delete_demand(conn, demand_id: int) -> bool:
     """
     Delete a demand from the database.
     
@@ -712,8 +694,6 @@ def delete_demand(demand_id: int) -> bool:
     Returns:
         True if the demand was deleted, False otherwise
     """
-    conn = get_db_connection()
-    
     # Check if demand has allocations
     has_allocations = conn.execute(
         "SELECT COUNT(*) FROM allocations WHERE demand_id = ?", 
@@ -721,7 +701,6 @@ def delete_demand(demand_id: int) -> bool:
     ).fetchone()[0]
     
     if has_allocations > 0:
-        conn.close()
         return False
     
     # Delete demand
@@ -730,25 +709,24 @@ def delete_demand(demand_id: int) -> bool:
     # Update monthly allocations
     update_monthly_allocations()
     
-    conn.close()
     return True
 
-def get_open_demands_count() -> int:
+@with_connection(read_only=True)
+def get_open_demands_count(conn) -> int:
     """
     Get the count of open demands.
     
     Returns:
         Count of open demands
     """
-    conn = get_db_connection()
     count = conn.execute(
         "SELECT COUNT(*) FROM demands WHERE status IN ('open', 'partially_filled')"
     ).fetchone()[0]
-    conn.close()
     return count
 
 # Allocation queries
-def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None) -> List[Allocation]:
+@with_connection(read_only=True)
+def get_allocations(conn, person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None) -> List[Allocation]:
     """
     Get all allocations, optionally filtered by person_id, project_id, or demand_id.
     
@@ -760,8 +738,6 @@ def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] =
     Returns:
         List of Allocation objects
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             a.id, 
@@ -801,7 +777,6 @@ def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] =
     query += " ORDER BY a.start_date"
     
     result = conn.execute(query, params).fetchall()
-    conn.close()
     
     allocations = []
     for row in result:
@@ -820,7 +795,8 @@ def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] =
     
     return allocations
 
-def get_allocation(allocation_id: int) -> Optional[Allocation]:
+@with_connection(read_only=True)
+def get_allocation(conn, allocation_id: int) -> Optional[Allocation]:
     """
     Get an allocation by ID.
     
@@ -830,8 +806,6 @@ def get_allocation(allocation_id: int) -> Optional[Allocation]:
     Returns:
         Allocation object if found, None otherwise
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             a.id, 
@@ -852,7 +826,6 @@ def get_allocation(allocation_id: int) -> Optional[Allocation]:
     """
     
     result = conn.execute(query, [allocation_id]).fetchone()
-    conn.close()
     
     if result:
         return Allocation(
@@ -870,7 +843,8 @@ def get_allocation(allocation_id: int) -> Optional[Allocation]:
     
     return None
 
-def save_allocation(allocation: Allocation) -> int:
+@with_connection()
+def save_allocation(conn, allocation: Allocation) -> int:
     """
     Save an allocation to the database.
     
@@ -880,8 +854,6 @@ def save_allocation(allocation: Allocation) -> int:
     Returns:
         The ID of the saved allocation
     """
-    conn = get_db_connection()
-    
     if allocation.id:
         # Update existing allocation
         query = """
@@ -929,10 +901,10 @@ def save_allocation(allocation: Allocation) -> int:
     # Update monthly allocations
     update_monthly_allocations()
     
-    conn.close()
     return allocation_id
 
-def delete_allocation(allocation_id: int) -> bool:
+@with_connection()
+def delete_allocation(conn, allocation_id: int) -> bool:
     """
     Delete an allocation from the database.
     
@@ -942,8 +914,6 @@ def delete_allocation(allocation_id: int) -> bool:
     Returns:
         True if the allocation was deleted, False otherwise
     """
-    conn = get_db_connection()
-    
     # Get the demand_id before deleting
     demand_id = conn.execute(
         "SELECT demand_id FROM allocations WHERE id = ?", 
@@ -965,22 +935,19 @@ def delete_allocation(allocation_id: int) -> bool:
     # Update monthly allocations
     update_monthly_allocations()
     
-    conn.close()
     return True
 
-def update_demand_status(demand_id: int) -> None:
+@with_connection()
+def update_demand_status(conn, demand_id: int) -> None:
     """
     Update the status of a demand based on its allocations.
     
     Args:
         demand_id: The ID of the demand to update
     """
-    conn = get_db_connection()
-    
     # Get the demand
     demand = get_demand(demand_id)
     if not demand:
-        conn.close()
         return
     
     # Get all allocations for this demand
@@ -1005,11 +972,10 @@ def update_demand_status(demand_id: int) -> None:
         "UPDATE demands SET status = ? WHERE id = ?",
         [new_status, demand_id]
     )
-    
-    conn.close()
 
 # Monthly demand and allocation queries
-def get_monthly_demand_allocation(start_date: date, end_date: date) -> List[MonthlyDemandAllocation]:
+@with_connection(read_only=True)
+def get_monthly_demand_allocation(conn, start_date: date, end_date: date) -> List[MonthlyDemandAllocation]:
     """
     Get monthly demand and allocation data for the specified date range.
     
@@ -1020,37 +986,68 @@ def get_monthly_demand_allocation(start_date: date, end_date: date) -> List[Mont
     Returns:
         List of MonthlyDemandAllocation objects
     """
-    conn = get_db_connection()
+    # Check if capacity_fte column exists
+    has_capacity = conn.execute("""
+        SELECT COUNT(*) FROM pragma_table_info('monthly_demand_allocation') 
+        WHERE name = 'capacity_fte'
+    """).fetchone()[0]
     
-    query = """
-        SELECT 
-            year_month,
-            demand_fte,
-            allocation_fte
-        FROM monthly_demand_allocation
-        WHERE year_month >= ? AND year_month <= ?
-        ORDER BY year_month
-    """
+    # Adjust query based on column existence
+    if has_capacity:
+        query = """
+            SELECT 
+                year_month,
+                demand_fte,
+                allocation_fte,
+                capacity_fte
+            FROM monthly_demand_allocation
+            WHERE year_month >= ? AND year_month <= ?
+            ORDER BY year_month
+        """
+    else:
+        # Create a temp view with capacity added (count of people)
+        conn.execute("""
+            CREATE OR REPLACE TEMP VIEW monthly_demand_allocation_with_capacity AS
+            SELECT 
+                mda.year_month,
+                mda.demand_fte,
+                mda.allocation_fte,
+                (SELECT COUNT(*) FROM people) AS capacity_fte
+            FROM monthly_demand_allocation mda
+        """)
+        
+        query = """
+            SELECT 
+                year_month,
+                demand_fte,
+                allocation_fte,
+                capacity_fte
+            FROM monthly_demand_allocation_with_capacity
+            WHERE year_month >= ? AND year_month <= ?
+            ORDER BY year_month
+        """
     
     # Convert to first day of month for comparison
     start_month = date(start_date.year, start_date.month, 1)
     end_month = date(end_date.year, end_date.month, 1)
     
     result = conn.execute(query, [start_month, end_month]).fetchall()
-    conn.close()
     
     monthly_data = []
     for row in result:
         monthly_data.append(MonthlyDemandAllocation(
             year_month=row[0],
             demand_fte=row[1],
-            allocation_fte=row[2]
+            allocation_fte=row[2],
+            capacity_fte=row[3] if len(row) > 3 else 0
         ))
     
     return monthly_data
 
-def update_monthly_allocations() -> None:
+@with_connection()
+def update_monthly_allocations(conn) -> None:
     """Update the monthly_demand_allocation table with current data."""
     # This function will be implemented in the init_db.py file
     # and will be called whenever demand or allocation data changes
-    from app.database.init_db import compute_monthly_allocations 
+    from app.database.init_db import compute_monthly_allocations
+    compute_monthly_allocations(conn) 

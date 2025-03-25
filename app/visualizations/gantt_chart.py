@@ -81,61 +81,74 @@ def create_demand_gantt(demands: List) -> go.Figure:
     Create a Gantt chart for resource demands.
     
     Args:
-        demands: List of Demand objects
+        demands: List of Demand objects or DataFrame
         
     Returns:
         Plotly figure with the Gantt chart
     """
-    if not demands:
+    # Handle empty input
+    if isinstance(demands, pd.DataFrame):
+        if demands.empty:
+            return go.Figure()
+        df = demands
+    elif not demands:
         return go.Figure()
-    
-    # Convert to DataFrame
-    df = pd.DataFrame([
-        {
+    else:
+        # Convert list of objects to DataFrame
+        df = pd.DataFrame([{
             "id": demand.id,
             "project_name": demand.project_name,
             "role_required": demand.role_required,
+            "skills_required": ", ".join(demand.skills_required) if demand.skills_required else "",
+            "fte_required": demand.fte_required,
             "start_date": demand.start_date,
             "end_date": demand.end_date,
             "status": demand.status,
-            "fte_required": demand.fte_required,
-            "skills_required": ", ".join(demand.skills_required) if demand.skills_required else ""
-        }
-        for demand in demands
-    ])
-    
-    # Create custom y-axis label
-    df["demand_label"] = df.apply(
-        lambda row: f"{row['project_name']}: {row['role_required']} ({row['fte_required']} FTE)", 
-        axis=1
-    )
-    
-    # Create color mapping for status
-    color_map = {
-        "open": "#F44336",           # Red
-        "partially_filled": "#FF9800", # Orange
-        "filled": "#4CAF50",         # Green
-        "cancelled": "#9E9E9E"       # Gray
-    }
+            "priority": demand.priority
+        } for demand in demands])
     
     # Create figure
     fig = px.timeline(
         df, 
         x_start="start_date", 
         x_end="end_date", 
-        y="demand_label",
+        y="project_name",
         color="status",
-        color_discrete_map=color_map,
+        hover_data=["role_required", "skills_required", "fte_required"]
     )
     
+    # Customize colors
+    fig.update_traces(
+        marker_color=px.colors.qualitative.Bold,
+        marker_line_width=0
+    )
+    
+    # Status-based color mapping
+    color_map = {
+        "unfilled": "rgb(239, 85, 59)",   # Red for unfilled
+        "open": "rgb(239, 85, 59)",       # Red for open
+        "partially_filled": "rgb(255, 161, 90)",  # Orange for partially filled
+        "filled": "rgb(99, 110, 250)",    # Blue for filled
+        "cancelled": "rgb(155, 155, 155)" # Gray for cancelled
+    }
+    
+    # Apply color based on status
+    for i, row in df.iterrows():
+        status = row["status"]
+        if status in color_map:
+            if i < len(fig.data):
+                fig.data[i].marker.color = color_map[status]
+    
     # Adjust bar width based on FTE (thicker bars for higher FTE)
-    for i, demand in enumerate(df.iterrows()):
+    widths = []
+    for i, row in df.iterrows():
         # Normalize the width between 0.2 and 1.0 based on FTE
-        # Assuming most FTEs will be between 0.1 and 2.0
-        width = min(1.0, max(0.2, demand[1]["fte_required"] / 2))
-        fig.data[0].marker.line.width = 0  # Remove border
-        if len(fig.data) > 0 and i < len(fig.data[0].width):
-            fig.data[0].width[i] = width
+        width = min(1.0, max(0.2, row["fte_required"]))
+        widths.append(width)
+    
+    # Apply widths to all traces
+    for trace in fig.data:
+        trace.update(width=widths)
     
     # Mark today's date with a vertical line
     today = date.today()
@@ -146,15 +159,18 @@ def create_demand_gantt(demands: List) -> go.Figure:
         xaxis_title="",
         yaxis_title="",
         legend_title="Status",
-        margin=dict(l=10, r=10, t=10, b=10),
+        margin=dict(l=10, r=10, t=10, b=10)
     )
     
     # Improve hover information
     hover_template = (
-        "<b>%{y}</b><br>" +
+        "Project: <b>%{y}</b><br>" +
+        "Role: <b>%{customdata[0]}</b><br>" +
+        "Skills: %{customdata[1]}<br>" +
+        "FTE: %{customdata[2]:.1f}<br>" +
         "Start: %{x[0]|%b %d, %Y}<br>" +
         "End: %{x[1]|%b %d, %Y}<br>" +
-        "Status: %{marker.color}<br>" +
+        "Status: <b>%{marker.color}</b><br>" +
         "<extra></extra>"
     )
     fig.update_traces(hovertemplate=hover_template)
@@ -166,17 +182,21 @@ def create_allocation_gantt(allocations: List) -> go.Figure:
     Create a Gantt chart for resource allocations.
     
     Args:
-        allocations: List of Allocation objects
+        allocations: List of Allocation objects or DataFrame
         
     Returns:
         Plotly figure with the Gantt chart
     """
-    if not allocations:
+    # Handle empty input
+    if isinstance(allocations, pd.DataFrame):
+        if allocations.empty:
+            return go.Figure()
+        df = allocations
+    elif not allocations:
         return go.Figure()
-    
-    # Convert to DataFrame
-    df = pd.DataFrame([
-        {
+    else:
+        # Convert list of objects to DataFrame
+        df = pd.DataFrame([{
             "id": allocation.id,
             "person_name": allocation.person_name,
             "project_name": allocation.project_name,
@@ -184,9 +204,7 @@ def create_allocation_gantt(allocations: List) -> go.Figure:
             "end_date": allocation.end_date,
             "fte_allocated": allocation.fte_allocated,
             "notes": allocation.notes if allocation.notes else ""
-        }
-        for allocation in allocations
-    ])
+        } for allocation in allocations])
     
     # Create figure
     fig = px.timeline(
@@ -199,12 +217,18 @@ def create_allocation_gantt(allocations: List) -> go.Figure:
     )
     
     # Adjust bar width based on FTE (thicker bars for higher FTE)
-    for i, allocation in enumerate(df.iterrows()):
-        # Normalize the width between 0.2 and 1.0 based on FTE
-        width = min(1.0, max(0.2, allocation[1]["fte_allocated"]))
-        fig.data[0].marker.line.width = 0  # Remove border
-        if len(fig.data) > 0 and i < len(fig.data[0].width):
-            fig.data[0].width[i] = width
+    for trace in fig.data:
+        widths = []
+        for i in range(len(df)):
+            # Normalize the width between 0.2 and 1.0 based on FTE
+            width = min(1.0, max(0.2, df.iloc[i]["fte_allocated"]))
+            widths.append(width)
+        
+        # Set the widths all at once
+        trace.update(width=widths)
+        
+        # Remove border
+        trace.marker.line.width = 0
     
     # Mark today's date with a vertical line
     today = date.today()
@@ -216,15 +240,24 @@ def create_allocation_gantt(allocations: List) -> go.Figure:
         yaxis_title="",
         legend_title="Project",
         margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     
     # Improve hover information
     hover_template = (
-        "<b>%{y}</b> on <b>%{customdata[3]}</b><br>" +
+        "<b>%{y}</b><br>" +
+        "Project: <b>%{customdata[3]}</b><br>" +
         "Start: %{x[0]|%b %d, %Y}<br>" +
         "End: %{x[1]|%b %d, %Y}<br>" +
-        "FTE: %{customdata[0]}<br>" +
-        "Notes: %{customdata[1]}<br>" +
+        "FTE: %{customdata[0]:.1f}<br>" +
+        "%{customdata[1]}<br>" +  # Notes (only shown if present)
         "<extra></extra>"
     )
     fig.update_traces(hovertemplate=hover_template)

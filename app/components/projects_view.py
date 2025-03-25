@@ -76,6 +76,11 @@ def render_projects_view():
             st.info("No projects found matching the selected criteria. Please add some projects to get started.")
     
     with tab2:
+        # Add clear button at the top of the form
+        if "edit_project_id" in st.session_state and st.session_state.edit_project_id is not None:
+            if st.button("Clear Form (Add New Project)"):
+                st.session_state.edit_project_id = None
+                st.rerun()
         render_project_form()
     
     with tab3:

@@ -104,6 +104,7 @@ def create_tables(conn):
         year_month DATE NOT NULL,
         demand_fte FLOAT DEFAULT 0,
         allocation_fte FLOAT DEFAULT 0,
+        capacity_fte FLOAT DEFAULT 0,
         PRIMARY KEY (year_month)
     )
     """)
@@ -198,83 +199,88 @@ def compute_monthly_allocations(conn=None):
         # Clear the existing data
         conn.execute("DELETE FROM monthly_demand_allocation")
         
-        # Get min and max dates from demand and allocations
-        min_date_result = conn.execute("""
-            SELECT MIN(start_date) FROM (
-                SELECT MIN(start_date) as start_date FROM demands
-                UNION ALL 
-                SELECT MIN(start_date) as start_date FROM allocations
+        # Get the date range for all demands and allocations
+        date_range = conn.execute("""
+            SELECT 
+                MIN(start_date) as min_date,
+                MAX(end_date) as max_date
+            FROM (
+                SELECT start_date, end_date FROM demands
+                UNION ALL
+                SELECT start_date, end_date FROM allocations
             )
         """).fetchone()
         
-        max_date_result = conn.execute("""
-            SELECT MAX(end_date) FROM (
-                SELECT MAX(end_date) as end_date FROM demands
-                UNION ALL 
-                SELECT MAX(end_date) as end_date FROM allocations
-            )
-        """).fetchone()
-        
-        if min_date_result[0] is None or max_date_result[0] is None:
-            print("No demand or allocation data found")
+        if not date_range[0] or not date_range[1]:
             return
         
-        min_date = min_date_result[0]
-        max_date = max_date_result[0]
+        start_date = date_range[0]
+        end_date = date_range[1]
         
-        # Generate a list of month start dates
-        month_starts = []
-        current_date = date(min_date.year, min_date.month, 1)
-        while current_date <= max_date:
-            month_starts.append(current_date)
-            # Move to the next month
+        # Generate a series of months
+        current_date = date(start_date.year, start_date.month, 1)
+        end_month = date(end_date.year, end_date.month, 1)
+        
+        # Get people count for capacity calculation
+        people_count = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        
+        while current_date <= end_month:
+            # Calculate days in the month
+            _, days_in_month = monthrange(current_date.year, current_date.month)
+            month_end = date(current_date.year, current_date.month, days_in_month)
+            
+            # Calculate demand FTE for the month
+            demand_fte = conn.execute("""
+                SELECT COALESCE(SUM(
+                    fte_required * (
+                        CAST(
+                            (LEAST(end_date, ?) - GREATEST(start_date, ?))
+                            AS INTEGER) + 1
+                    ) / CAST(? AS INTEGER)
+                ), 0) as monthly_fte
+                FROM demands
+                WHERE start_date <= ? AND end_date >= ?
+            """, [month_end, current_date, days_in_month, month_end, current_date]).fetchone()[0]
+            
+            # Calculate allocation FTE for the month
+            allocation_fte = conn.execute("""
+                SELECT COALESCE(SUM(
+                    fte_allocated * (
+                        CAST(
+                            (LEAST(end_date, ?) - GREATEST(start_date, ?))
+                            AS INTEGER) + 1
+                    ) / CAST(? AS INTEGER)
+                ), 0) as monthly_fte
+                FROM allocations
+                WHERE start_date <= ? AND end_date >= ?
+            """, [month_end, current_date, days_in_month, month_end, current_date]).fetchone()[0]
+            
+            # Check if capacity_fte column exists in the table
+            has_capacity = conn.execute("""
+                SELECT COUNT(*) FROM pragma_table_info('monthly_demand_allocation') 
+                WHERE name = 'capacity_fte'
+            """).fetchone()[0]
+            
+            if has_capacity:
+                # Insert with capacity_fte
+                conn.execute("""
+                    INSERT INTO monthly_demand_allocation 
+                    (year_month, demand_fte, allocation_fte, capacity_fte)
+                    VALUES (?, ?, ?, ?)
+                """, [current_date, demand_fte, allocation_fte, people_count])
+            else:
+                # Insert without capacity_fte (older schema)
+                conn.execute("""
+                    INSERT INTO monthly_demand_allocation 
+                    (year_month, demand_fte, allocation_fte)
+                    VALUES (?, ?, ?)
+                """, [current_date, demand_fte, allocation_fte])
+            
+            # Move to next month
             if current_date.month == 12:
                 current_date = date(current_date.year + 1, 1, 1)
             else:
                 current_date = date(current_date.year, current_date.month + 1, 1)
-        
-        # Process each month
-        for month_start in month_starts:
-            # Calculate month end date
-            if month_start.month == 12:
-                month_end = date(month_start.year, 12, 31)
-            else:
-                month_end = date(month_start.year, month_start.month + 1, 1) - timedelta(days=1)
-            
-            # Calculate days in month
-            days_in_month = monthrange(month_start.year, month_start.month)[1]
-            
-            # Calculate demand FTE for this month
-            demand_fte = conn.execute("""
-                SELECT COALESCE(SUM(
-                    -- Calculate the FTE for overlapping days in the month
-                    d.fte_required * (
-                        -- Calculate number of overlapping days
-                        (LEAST(d.end_date, ?) - GREATEST(d.start_date, ?)) + 1
-                    ) / ?
-                ), 0) as monthly_fte
-                FROM demands d
-                WHERE d.start_date <= ? AND d.end_date >= ?
-            """, [month_end, month_start, days_in_month, month_end, month_start]).fetchone()[0]
-            
-            # Calculate allocation FTE for this month
-            allocation_fte = conn.execute("""
-                SELECT COALESCE(SUM(
-                    -- Calculate the FTE for overlapping days in the month
-                    a.fte_allocated * (
-                        -- Calculate number of overlapping days
-                        (LEAST(a.end_date, ?) - GREATEST(a.start_date, ?)) + 1
-                    ) / ?
-                ), 0) as monthly_fte
-                FROM allocations a
-                WHERE a.start_date <= ? AND a.end_date >= ?
-            """, [month_end, month_start, days_in_month, month_end, month_start]).fetchone()[0]
-            
-            # Insert into monthly_demand_allocation table
-            conn.execute("""
-                INSERT INTO monthly_demand_allocation (year_month, demand_fte, allocation_fte)
-                VALUES (?, ?, ?)
-            """, [month_start, demand_fte, allocation_fte])
     
     finally:
         if should_close_conn:

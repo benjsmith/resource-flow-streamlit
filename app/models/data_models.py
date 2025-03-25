@@ -63,6 +63,7 @@ class MonthlyDemandAllocation:
     year_month: date  # First day of month
     demand_fte: float
     allocation_fte: float
+    capacity_fte: float = 0
 
 @dataclass
 class TeamAllocation:
