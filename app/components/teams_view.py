@@ -71,16 +71,15 @@ def render_team_members(team):
     
     if people:
         # Convert to DataFrame for display
-        members_data = []
+        team_people = []
         for person in people:
-            members_data.append({
+            team_people.append({
                 "ID": person.id,
                 "Name": person.name,
-                "Role": person.role,
-                "Skills": ", ".join(person.skills) if person.skills else ""
+                "Role": person.role
             })
         
-        df = pd.DataFrame(members_data)
+        df = pd.DataFrame(team_people)
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info(f"No members found in team {team.name}")

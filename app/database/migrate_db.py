@@ -48,9 +48,34 @@ def migrate_database():
             from app.database.init_db import compute_monthly_allocations
             compute_monthly_allocations(conn)
             
-            print("Migration completed successfully!")
-        else:
-            print("Database schema is already up to date.")
+            print("Capacity migration completed successfully!")
+        
+        # Project fields migration
+        # Check if columns exist in projects table
+        columns = conn.execute("""
+            SELECT name FROM pragma_table_info('projects')
+        """).fetchall()
+        column_names = [col[0] for col in columns]
+        
+        project_columns_added = False
+        
+        # Add project_manager column if it doesn't exist
+        if "project_manager" not in column_names:
+            conn.execute("ALTER TABLE projects ADD COLUMN project_manager VARCHAR")
+            project_columns_added = True
+        
+        # Add project_type column if it doesn't exist
+        if "project_type" not in column_names:
+            conn.execute("ALTER TABLE projects ADD COLUMN project_type VARCHAR")
+            project_columns_added = True
+        
+        # Add lead_team_id column if it doesn't exist
+        if "lead_team_id" not in column_names:
+            conn.execute("ALTER TABLE projects ADD COLUMN lead_team_id INTEGER REFERENCES teams(id)")
+            project_columns_added = True
+        
+        if project_columns_added:
+            print("Added new project fields: project_manager, project_type, and lead_team_id")
     
     finally:
         conn.close()

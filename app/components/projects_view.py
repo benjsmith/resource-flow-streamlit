@@ -34,6 +34,9 @@ def render_projects_view():
                     "ID": project.id,
                     "Name": project.name,
                     "Status": project.status,
+                    "Project Manager": project.project_manager,
+                    "Project Type": project.project_type,
+                    "Lead Team": project.lead_team_name or "",
                     "Start Date": project.start_date,
                     "End Date": project.end_date,
                     "Description": project.description
@@ -104,8 +107,7 @@ def render_project_demands(project):
                 "Start Date": demand.start_date,
                 "End Date": demand.end_date,
                 "Status": demand.status,
-                "Priority": demand.priority,
-                "Skills": ", ".join(demand.skills_required) if demand.skills_required else ""
+                "Priority": demand.priority
             })
         
         df = pd.DataFrame(demands_data)
@@ -167,17 +169,40 @@ def render_project_form():
         name = st.text_input("Project Name", value=project.name)
         description = st.text_area("Description", value=project.description or "", height=100)
         
+        # Get teams for selection
+        teams = db.get_teams()
+        team_options = [(None, "-")] + [(team.id, team.name) for team in teams]
+        
         col1, col2 = st.columns(2)
         with col1:
+            project_manager = st.text_input("Project Manager", value=project.project_manager or "")
+            project_type = st.text_input("Project Type", value=project.project_type or "")
+            
+            # Team dropdown
+            selected_team_index = 0
+            for i, (team_id, _) in enumerate(team_options):
+                if team_id == project.lead_team_id:
+                    selected_team_index = i
+                    break
+            
+            lead_team = st.selectbox(
+                "Lead Team",
+                options=range(len(team_options)),
+                format_func=lambda i: team_options[i][1],
+                index=selected_team_index
+            )
+            lead_team_id = team_options[lead_team][0] if lead_team is not None else None
+            
             start_date = st.date_input("Start Date", value=project.start_date)
+        
         with col2:
             end_date = st.date_input("End Date", value=project.end_date)
-        
-        status = st.selectbox(
-            "Status",
-            options=["planning", "active", "completed", "cancelled"],
-            index=["planning", "active", "completed", "cancelled"].index(project.status) if project.status else 0
-        )
+            
+            status = st.selectbox(
+                "Status",
+                options=["planning", "active", "completed", "cancelled"],
+                index=["planning", "active", "completed", "cancelled"].index(project.status) if project.status else 0
+            )
         
         submitted = st.form_submit_button("Save Project")
         
@@ -193,6 +218,9 @@ def render_project_form():
                 project.start_date = start_date
                 project.end_date = end_date
                 project.status = status
+                project.project_manager = project_manager
+                project.project_type = project_type
+                project.lead_team_id = lead_team_id
                 
                 # Save to database
                 project_id = db.save_project(project)

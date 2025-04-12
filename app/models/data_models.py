@@ -35,6 +35,10 @@ class Project:
     end_date: Optional[date] = None
     status: str = "planning"  # planning, active, completed, cancelled
     id: Optional[int] = None
+    project_manager: str = ""
+    project_type: str = ""
+    lead_team_id: Optional[int] = None
+    lead_team_name: Optional[str] = None
 
 @dataclass
 class Demand:

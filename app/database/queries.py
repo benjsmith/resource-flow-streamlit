@@ -376,16 +376,18 @@ def get_team_allocations(conn, start_date: date, end_date: date) -> List[TeamAll
 def get_projects(conn, status: Optional[str] = None) -> List[Project]:
     """Get all projects, optionally filtered by status."""
     query = """
-        SELECT id, name, description, start_date, end_date, status
-        FROM projects
+        SELECT p.id, p.name, p.description, p.start_date, p.end_date, p.status, 
+               p.project_manager, p.project_type, p.lead_team_id, t.name as lead_team_name
+        FROM projects p
+        LEFT JOIN teams t ON p.lead_team_id = t.id
     """
     
     params = []
     if status:
-        query += " WHERE status = ?"
+        query += " WHERE p.status = ?"
         params.append(status)
     
-    query += " ORDER BY start_date DESC"
+    query += " ORDER BY p.start_date DESC"
     
     result = conn.execute(query, params).fetchall()
     
@@ -397,7 +399,11 @@ def get_projects(conn, status: Optional[str] = None) -> List[Project]:
             description=row[2],
             start_date=row[3],
             end_date=row[4],
-            status=row[5]
+            status=row[5],
+            project_manager=row[6],
+            project_type=row[7],
+            lead_team_id=row[8],
+            lead_team_name=row[9]
         ))
     
     return projects
@@ -414,9 +420,11 @@ def get_project(conn, project_id: int) -> Optional[Project]:
         Project object if found, None otherwise
     """
     query = """
-        SELECT id, name, description, start_date, end_date, status
-        FROM projects
-        WHERE id = ?
+        SELECT p.id, p.name, p.description, p.start_date, p.end_date, p.status,
+               p.project_manager, p.project_type, p.lead_team_id, t.name as lead_team_name
+        FROM projects p
+        LEFT JOIN teams t ON p.lead_team_id = t.id
+        WHERE p.id = ?
     """
     
     result = conn.execute(query, [project_id]).fetchone()
@@ -428,7 +436,11 @@ def get_project(conn, project_id: int) -> Optional[Project]:
             description=result[2],
             start_date=result[3],
             end_date=result[4],
-            status=result[5]
+            status=result[5],
+            project_manager=result[6],
+            project_type=result[7],
+            lead_team_id=result[8],
+            lead_team_name=result[9]
         )
     
     return None
@@ -448,7 +460,8 @@ def save_project(conn, project: Project) -> int:
         # Update existing project
         query = """
             UPDATE projects
-            SET name = ?, description = ?, start_date = ?, end_date = ?, status = ?
+            SET name = ?, description = ?, start_date = ?, end_date = ?, status = ?,
+                project_manager = ?, project_type = ?, lead_team_id = ?
             WHERE id = ?
         """
         conn.execute(query, [
@@ -457,14 +470,18 @@ def save_project(conn, project: Project) -> int:
             project.start_date, 
             project.end_date,
             project.status,
+            project.project_manager,
+            project.project_type,
+            project.lead_team_id,
             project.id
         ])
         project_id = project.id
     else:
         # Insert new project
         query = """
-            INSERT INTO projects (name, description, start_date, end_date, status)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO projects (name, description, start_date, end_date, status, 
+                                 project_manager, project_type, lead_team_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """
         result = conn.execute(query, [
@@ -472,7 +489,10 @@ def save_project(conn, project: Project) -> int:
             project.description, 
             project.start_date, 
             project.end_date,
-            project.status
+            project.status,
+            project.project_manager,
+            project.project_type,
+            project.lead_team_id
         ]).fetchone()
         project_id = result[0]
     

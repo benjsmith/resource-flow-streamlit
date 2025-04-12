@@ -60,7 +60,11 @@ def create_tables(conn):
         description VARCHAR,
         start_date DATE NOT NULL,
         end_date DATE,
-        status VARCHAR DEFAULT 'planning'
+        status VARCHAR DEFAULT 'planning',
+        project_manager VARCHAR,
+        project_type VARCHAR,
+        lead_team_id INTEGER,
+        FOREIGN KEY (lead_team_id) REFERENCES teams(id)
     )
     """)
     
@@ -142,15 +146,15 @@ def add_sample_data(conn):
     # Add Projects
     today = date.today()
     projects = [
-        (1, "Website Redesign", "Redesign company website with new branding", today - timedelta(days=30), today + timedelta(days=90), "active"),
-        (2, "Mobile App Development", "Create new mobile app for customers", today - timedelta(days=15), today + timedelta(days=120), "active"),
-        (3, "Data Platform", "Build new data analytics platform", today + timedelta(days=15), today + timedelta(days=180), "planning"),
-        (4, "CRM Integration", "Integrate with new CRM system", today + timedelta(days=45), today + timedelta(days=90), "planning")
+        (1, "Website Redesign", "Redesign company website with new branding", today - timedelta(days=30), today + timedelta(days=90), "active", "Alice Brown", "Marketing", 2),
+        (2, "Mobile App Development", "Create new mobile app for customers", today - timedelta(days=15), today + timedelta(days=120), "active", "John Smith", "Development", 1),
+        (3, "Data Platform", "Build new data analytics platform", today + timedelta(days=15), today + timedelta(days=180), "planning", "Charlie Davis", "Infrastructure", 4),
+        (4, "CRM Integration", "Integrate with new CRM system", today + timedelta(days=45), today + timedelta(days=90), "planning", "Eva Wilson", "Integration", 3)
     ]
     
     conn.executemany("""
-    INSERT INTO projects (id, name, description, start_date, end_date, status)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, description, start_date, end_date, status, project_manager, project_type, lead_team_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, projects)
     
     # Add Demands
