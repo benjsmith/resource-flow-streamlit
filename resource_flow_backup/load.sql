@@ -1,0 +1,14 @@
+COPY allocation_id_map FROM 'resource_flow_backup/allocation_id_map.csv' (FORMAT 'csv', quote '"', delimiter ',', header 1);
+COPY demand_id_map FROM 'resource_flow_backup/demand_id_map.csv' (FORMAT 'csv', quote '"', delimiter ',', header 1);
+COPY monthly_demand_allocation FROM 'resource_flow_backup/monthly_demand_allocation.csv' (FORMAT 'csv', force_not_null 'year_month', quote '"', delimiter ',', header 1);
+COPY person_id_map FROM 'resource_flow_backup/person_id_map.csv' (FORMAT 'csv', quote '"', delimiter ',', header 1);
+COPY projects FROM 'resource_flow_backup/projects.csv' (FORMAT 'csv', force_not_null ('name', 'start_date', 'id'), quote '"', delimiter ',', header 1);
+COPY project_id_map FROM 'resource_flow_backup/project_id_map.csv' (FORMAT 'csv', quote '"', delimiter ',', header 1);
+COPY teams FROM 'resource_flow_backup/teams.csv' (FORMAT 'csv', force_not_null ('name', 'id'), quote '"', delimiter ',', header 1);
+COPY teams_uuid FROM 'resource_flow_backup/teams_uuid.csv' (FORMAT 'csv', force_not_null ('name', 'id'), quote '"', delimiter ',', header 1);
+COPY team_id_map FROM 'resource_flow_backup/team_id_map.csv' (FORMAT 'csv', quote '"', delimiter ',', header 1);
+COPY people FROM 'resource_flow_backup/people.csv' (FORMAT 'csv', force_not_null ('name', 'id'), quote '"', delimiter ',', header 1);
+COPY people_uuid FROM 'resource_flow_backup/people_uuid.csv' (FORMAT 'csv', force_not_null ('name', 'id'), quote '"', delimiter ',', header 1);
+COPY projects_uuid FROM 'resource_flow_backup/projects_uuid.csv' (FORMAT 'csv', force_not_null ('name', 'start_date', 'id'), quote '"', delimiter ',', header 1);
+COPY demands_uuid FROM 'resource_flow_backup/demands_uuid.csv' (FORMAT 'csv', force_not_null ('project_id', 'fte_required', 'start_date', 'end_date', 'id'), quote '"', delimiter ',', header 1);
+COPY allocations FROM 'resource_flow_backup/allocations.csv' (FORMAT 'csv', force_not_null ('person_id', 'project_id', 'fte_allocated', 'start_date', 'end_date', 'id'), quote '"', delimiter ',', header 1);

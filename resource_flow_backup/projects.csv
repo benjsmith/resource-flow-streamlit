@@ -1,0 +1,5 @@
+id,name,description,start_date,end_date,status,project_manager_id,project_type,lead_team_id
+1,Website Redesign,Redesign company website with new branding,2025-02-23,2025-06-23,active,,,
+2,Mobile App Development,Create new mobile app for customers,2025-03-10,2025-07-23,active,,,
+3,Data Platform,Build new data analytics platform,2025-04-09,2025-09-21,planning,,,
+4,App Marketplace,Create a marketplace for apps created using the platform,2025-05-15,2026-06-01,planning,4,"",1

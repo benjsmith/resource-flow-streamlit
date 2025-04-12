@@ -1,0 +1,7 @@
+id,project_id,role_required,skills_required,fte_required,start_date,end_date,priority,status
+1,1,Frontend Developer,"React,JavaScript,HTML,CSS",1.0,2025-02-23,2025-06-23,3,partially_filled
+2,1,UX Designer,"Figma,Sketch,User Research",0.5,2025-02-23,2025-05-09,2,partially_filled
+3,2,Mobile Developer,"Swift,Kotlin,React Native",2.0,2025-03-10,2025-07-23,4,partially_filled
+4,3,Data Engineer,"Python,SQL,ETL,Spark",1.0,2025-04-09,2025-09-21,3,open
+5,3,Machine Learning Engineer,"Python,ML,TensorFlow",0.5,2025-05-09,2025-09-21,2,open
+6,4,Backend Developer,"Java,Spring,API Design",1.0,2025-05-09,2025-06-23,3,open

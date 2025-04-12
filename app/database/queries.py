@@ -595,13 +595,13 @@ def get_demands(conn, project_id: Optional[int] = None, status: Optional[str] = 
         demand = Demand(
             id=row[0],
             project_id=row[1],
-            project_name=row[2],
             role_required=row[3],
             fte_required=row[4],
             start_date=row[5],
             end_date=row[6],
             priority=row[7],
-            status=row[8]
+            status=row[8],
+            project_name=row[2]
         )
         demands.append(demand)
     
@@ -646,13 +646,13 @@ def get_demand(demand_id: int, conn=None) -> Optional[Demand]:
             return Demand(
                 id=result[0],
                 project_id=result[1],
-                project_name=result[2],
                 role_required=result[3],
                 fte_required=result[4],
                 start_date=result[5],
                 end_date=result[6],
                 priority=result[7],
-                status=result[8]
+                status=result[8],
+                project_name=result[2]
             )
         
         return None

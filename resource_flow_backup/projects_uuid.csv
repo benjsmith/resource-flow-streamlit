@@ -1,0 +1,5 @@
+id,name,description,start_date,end_date,status,project_manager_id,project_type,lead_team_id
+e3191d6e-89c8-4aaa-8b6c-afac1ae72d98,App Marketplace,Create a marketplace for apps created using the platform,2025-05-15,2026-06-01,planning,8bc01a30-e9e1-481f-ba4a-c3afe65378d5,"",b7887e6d-09fb-47bd-802f-8cb58d6f5fa2
+f07728c2-6262-474f-920d-4632450ac884,Website Redesign,Redesign company website with new branding,2025-02-23,2025-06-23,active,,,
+5f504c66-e837-4327-8d2f-2380f5f513ff,Mobile App Development,Create new mobile app for customers,2025-03-10,2025-07-23,active,,,
+5df8d1de-a4b9-4002-928f-70b0b3cd94ae,Data Platform,Build new data analytics platform,2025-04-09,2025-09-21,planning,,,

@@ -1,0 +1,7 @@
+id,project_id,role_required,fte_required,start_date,end_date,priority,status
+21111007-85f3-4f3c-a159-fbb35b93b0c1,f07728c2-6262-474f-920d-4632450ac884,Frontend Developer,1.0,2025-02-23,2025-06-23,3,partially_filled
+2d244b1d-0833-457a-9a05-5e7f2b2acf82,f07728c2-6262-474f-920d-4632450ac884,UX Designer,0.5,2025-02-23,2025-05-09,2,partially_filled
+922b70ec-a13d-4738-a05f-64f345894534,5f504c66-e837-4327-8d2f-2380f5f513ff,Mobile Developer,2.0,2025-03-10,2025-07-23,4,partially_filled
+9deeb362-9df7-41d4-b8dd-a4d623c192e5,5df8d1de-a4b9-4002-928f-70b0b3cd94ae,Data Engineer,1.0,2025-04-09,2025-09-21,3,open
+f48c1eec-112a-4557-80c8-b5664924fae6,5df8d1de-a4b9-4002-928f-70b0b3cd94ae,Machine Learning Engineer,0.5,2025-05-09,2025-09-21,2,open
+8cead634-f62f-4b60-9e59-cec82b1a28b2,e3191d6e-89c8-4aaa-8b6c-afac1ae72d98,Backend Developer,1.0,2025-05-09,2025-06-23,3,open
