@@ -55,9 +55,22 @@ def render_people_view():
                 hide_index=True,
                 column_config={
                     "ID": st.column_config.TextColumn("ID", width="small", help="Person ID"),
-                },
-                on_click=lambda row: handle_person_selection(row)
+                }
             )
+            
+            # Add a selection dropdown for people
+            selected_name = st.selectbox(
+                "Select Person",
+                options=["Select a person..."] + [p.name for p in people],
+                index=0
+            )
+            
+            if selected_name != "Select a person...":
+                selected_person = next((p for p in people if p.name == selected_name), None)
+                if selected_person:
+                    st.session_state.selected_person_id = selected_person.id
+                    st.session_state.editing_person = False
+                    st.rerun()
     
     with col2:
         # Show delete confirmation if needed
@@ -111,16 +124,6 @@ def render_people_view():
         # Empty state
         else:
             st.info("Select a person from the list to view details, or click 'Add New Person' to create a new entry.")
-
-def handle_person_selection(row):
-    """Handle when a person is selected from the dataframe."""
-    # Get the ID from the selected row
-    person_id = row['ID']
-    
-    # Select the person
-    st.session_state.selected_person_id = person_id
-    st.session_state.editing_person = False
-    st.experimental_rerun()
 
 def render_person_details(person):
     """Render the details view for a person."""
