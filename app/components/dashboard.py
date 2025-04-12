@@ -78,36 +78,6 @@ def create_team_allocation_chart(team_allocations):
     
     return fig
 
-def create_utilization_trend_chart(monthly_data):
-    """Create an area chart showing resource utilization trends."""
-    if not monthly_data:
-        return go.Figure()
-    
-    df = pd.DataFrame([{
-        "Month": data.year_month,
-        "Utilization": (data.allocation_fte / data.capacity_fte * 100) if data.capacity_fte > 0 else 0
-    } for data in monthly_data])
-    
-    fig = go.Figure(data=[
-        go.Scatter(
-            x=df["Month"],
-            y=df["Utilization"],
-            fill="tozeroy",
-            mode="lines",
-            line=dict(color="rgb(26, 118, 255)")
-        )
-    ])
-    
-    fig.update_layout(
-        showlegend=False,
-        margin=dict(l=0, r=0, t=20, b=0),
-        height=200,
-        yaxis_title="Utilization %",
-        yaxis_range=[0, 100]
-    )
-    
-    return fig
-
 def aggregate_data_by_period(monthly_data, period="month"):
     """
     Aggregate monthly data by specified period (month, quarter, or year).
@@ -264,20 +234,6 @@ def render_dashboard():
     # Create the resource trend chart
     fig_resource_trend = create_resource_trend_chart(monthly_data)
     st.plotly_chart(fig_resource_trend, use_container_width=True)
-    
-    # Period selector for trend chart (month, quarter, year)
-    period_options = ["month", "quarter", "year"]
-    period = st.selectbox("Time Resolution", period_options, index=0)
-    
-    # Update chart with selected period
-    if period != "month":
-        fig_resource_trend = create_resource_trend_chart(monthly_data, period)
-        st.plotly_chart(fig_resource_trend, use_container_width=True)
-    
-    # Resource Utilization Trends
-    st.subheader("Resource Utilization Trend")
-    fig_utilization = create_utilization_trend_chart(monthly_data)
-    st.plotly_chart(fig_utilization, use_container_width=True)
     
     # Upcoming Key Dates
     st.subheader("Upcoming Key Dates")
