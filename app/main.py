@@ -26,7 +26,9 @@ original_default = PlotlyJSONEncoder.default
 def patched_default(self, obj):
     if isinstance(obj, timedelta):
         return str(obj)
-    return original_default(self, obj)
+    if hasattr(original_default, '__call__'):  # Ensure it's callable
+        return original_default(self, obj)
+    return json.JSONEncoder.default(self, obj)
 
 PlotlyJSONEncoder.default = patched_default
 
