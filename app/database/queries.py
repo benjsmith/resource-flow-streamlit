@@ -376,10 +376,13 @@ def get_team_allocations(conn, start_date: date, end_date: date) -> List[TeamAll
 def get_projects(conn, status: Optional[str] = None) -> List[Project]:
     """Get all projects, optionally filtered by status."""
     query = """
-        SELECT p.id, p.name, p.description, p.start_date, p.end_date, p.status, 
-               p.project_manager, p.project_type, p.lead_team_id, t.name as lead_team_name
+        SELECT 
+            p.id, p.name, p.description, p.start_date, p.end_date, p.status,
+            p.project_manager_id, pm.name as project_manager_name, 
+            p.project_type, p.lead_team_id, t.name as lead_team_name
         FROM projects p
         LEFT JOIN teams t ON p.lead_team_id = t.id
+        LEFT JOIN people pm ON p.project_manager_id = pm.id
     """
     
     params = []
@@ -400,10 +403,11 @@ def get_projects(conn, status: Optional[str] = None) -> List[Project]:
             start_date=row[3],
             end_date=row[4],
             status=row[5],
-            project_manager=row[6],
-            project_type=row[7],
-            lead_team_id=row[8],
-            lead_team_name=row[9]
+            project_manager_id=row[6],
+            project_manager_name=row[7],
+            project_type=row[8],
+            lead_team_id=row[9],
+            lead_team_name=row[10]
         ))
     
     return projects
@@ -420,10 +424,13 @@ def get_project(conn, project_id: int) -> Optional[Project]:
         Project object if found, None otherwise
     """
     query = """
-        SELECT p.id, p.name, p.description, p.start_date, p.end_date, p.status,
-               p.project_manager, p.project_type, p.lead_team_id, t.name as lead_team_name
+        SELECT 
+            p.id, p.name, p.description, p.start_date, p.end_date, p.status,
+            p.project_manager_id, pm.name as project_manager_name, 
+            p.project_type, p.lead_team_id, t.name as lead_team_name
         FROM projects p
         LEFT JOIN teams t ON p.lead_team_id = t.id
+        LEFT JOIN people pm ON p.project_manager_id = pm.id
         WHERE p.id = ?
     """
     
@@ -437,10 +444,11 @@ def get_project(conn, project_id: int) -> Optional[Project]:
             start_date=result[3],
             end_date=result[4],
             status=result[5],
-            project_manager=result[6],
-            project_type=result[7],
-            lead_team_id=result[8],
-            lead_team_name=result[9]
+            project_manager_id=result[6],
+            project_manager_name=result[7],
+            project_type=result[8],
+            lead_team_id=result[9],
+            lead_team_name=result[10]
         )
     
     return None
@@ -461,7 +469,7 @@ def save_project(conn, project: Project) -> int:
         query = """
             UPDATE projects
             SET name = ?, description = ?, start_date = ?, end_date = ?, status = ?,
-                project_manager = ?, project_type = ?, lead_team_id = ?
+                project_manager_id = ?, project_type = ?, lead_team_id = ?
             WHERE id = ?
         """
         conn.execute(query, [
@@ -470,7 +478,7 @@ def save_project(conn, project: Project) -> int:
             project.start_date, 
             project.end_date,
             project.status,
-            project.project_manager,
+            project.project_manager_id,
             project.project_type,
             project.lead_team_id,
             project.id
@@ -480,7 +488,7 @@ def save_project(conn, project: Project) -> int:
         # Insert new project
         query = """
             INSERT INTO projects (name, description, start_date, end_date, status, 
-                                 project_manager, project_type, lead_team_id)
+                                  project_manager_id, project_type, lead_team_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """
@@ -490,7 +498,7 @@ def save_project(conn, project: Project) -> int:
             project.start_date, 
             project.end_date,
             project.status,
-            project.project_manager,
+            project.project_manager_id,
             project.project_type,
             project.lead_team_id
         ]).fetchone()

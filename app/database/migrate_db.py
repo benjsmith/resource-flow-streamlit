@@ -59,9 +59,38 @@ def migrate_database():
         
         project_columns_added = False
         
-        # Add project_manager column if it doesn't exist
-        if "project_manager" not in column_names:
-            conn.execute("ALTER TABLE projects ADD COLUMN project_manager VARCHAR")
+        # Check if we need to convert project_manager to project_manager_id
+        if "project_manager" in column_names and "project_manager_id" not in column_names:
+            print("Converting project_manager from string to project_manager_id reference...")
+            
+            # First add the project_manager_id column
+            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER REFERENCES people(id)")
+            
+            # Then try to match project_manager names to people names
+            # Get all projects with project_manager set
+            projects_with_managers = conn.execute("""
+                SELECT id, project_manager FROM projects 
+                WHERE project_manager IS NOT NULL AND project_manager != ''
+            """).fetchall()
+            
+            # Get all people for matching
+            people = conn.execute("SELECT id, name FROM people").fetchall()
+            people_map = {person[1]: person[0] for person in people}
+            
+            # Update each project's project_manager_id if we can find a match
+            for project_id, manager_name in projects_with_managers:
+                if manager_name in people_map:
+                    person_id = people_map[manager_name]
+                    conn.execute(
+                        "UPDATE projects SET project_manager_id = ? WHERE id = ?",
+                        [person_id, project_id]
+                    )
+            
+            # Don't drop the old column yet - we'll do that in a future migration
+            project_columns_added = True
+        elif "project_manager_id" not in column_names:
+            # Add project_manager_id column if it doesn't exist
+            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER REFERENCES people(id)")
             project_columns_added = True
         
         # Add project_type column if it doesn't exist
@@ -75,7 +104,7 @@ def migrate_database():
             project_columns_added = True
         
         if project_columns_added:
-            print("Added new project fields: project_manager, project_type, and lead_team_id")
+            print("Added new project fields: project_manager_id, project_type, and lead_team_id")
     
     finally:
         conn.close()

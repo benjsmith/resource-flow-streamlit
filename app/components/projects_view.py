@@ -34,7 +34,7 @@ def render_projects_view():
                     "ID": project.id,
                     "Name": project.name,
                     "Status": project.status,
-                    "Project Manager": project.project_manager,
+                    "Project Manager": project.project_manager_name or "",
                     "Project Type": project.project_type,
                     "Lead Team": project.lead_team_name or "",
                     "Start Date": project.start_date,
@@ -173,9 +173,27 @@ def render_project_form():
         teams = db.get_teams()
         team_options = [(None, "-")] + [(team.id, team.name) for team in teams]
         
+        # Get people for project manager selection
+        people = db.get_people()
+        manager_options = [(None, "-")] + [(person.id, person.name) for person in people]
+        
         col1, col2 = st.columns(2)
         with col1:
-            project_manager = st.text_input("Project Manager", value=project.project_manager or "")
+            # Project Manager dropdown
+            selected_manager_index = 0
+            for i, (person_id, _) in enumerate(manager_options):
+                if project.project_manager_id == person_id:
+                    selected_manager_index = i
+                    break
+            
+            project_manager = st.selectbox(
+                "Project Manager",
+                options=range(len(manager_options)),
+                format_func=lambda i: manager_options[i][1],
+                index=selected_manager_index
+            )
+            project_manager_id = manager_options[project_manager][0] if project_manager is not None else None
+            
             project_type = st.text_input("Project Type", value=project.project_type or "")
             
             # Team dropdown
@@ -218,7 +236,7 @@ def render_project_form():
                 project.start_date = start_date
                 project.end_date = end_date
                 project.status = status
-                project.project_manager = project_manager
+                project.project_manager = project_manager_id
                 project.project_type = project_type
                 project.lead_team_id = lead_team_id
                 
