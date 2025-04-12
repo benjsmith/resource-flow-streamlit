@@ -74,7 +74,15 @@ def render_demand_view():
             
             cols = st.columns(3)
             with cols[0]:
-                demand_id = st.number_input("Demand ID", min_value=1, step=1)
+                # Create a selectbox for demand selection
+                demand_options = [(str(d.id), f"{d.role_required} - {d.project_name or 'Unknown'}") for d in demands]
+                selected_demand = st.selectbox(
+                    "Select Demand",
+                    options=[option[0] for option in demand_options],
+                    format_func=lambda x: next((opt[1] for opt in demand_options if opt[0] == x), x),
+                    key="demand_selector"
+                )
+                demand_id = selected_demand
             
             with cols[1]:
                 view_allocations = st.button("View Allocations")

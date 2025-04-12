@@ -102,9 +102,17 @@ def render_allocations_list():
     # Add actions for selected allocation
     st.subheader("Actions")
     
-    cols = st.columns(2)
+    cols = st.columns(3)
     with cols[0]:
-        allocation_id = st.number_input("Allocation ID", min_value=1, step=1)
+        # Create a selectbox for allocation selection
+        allocation_options = [(str(a.id), f"{a.person_name or 'Unknown'} - {a.project_name or 'Unknown'}") for a in allocations]
+        selected_allocation = st.selectbox(
+            "Select Allocation",
+            options=[option[0] for option in allocation_options],
+            format_func=lambda x: next((opt[1] for opt in allocation_options if opt[0] == x), x),
+            key="allocation_selector"
+        )
+        allocation_id = selected_allocation
     
     with cols[1]:
         edit_allocation = st.button("Edit Allocation")

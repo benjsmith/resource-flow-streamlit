@@ -27,7 +27,7 @@ def render_people_list():
     col1, col2 = st.columns([2, 1])
     with col1:
         team_filter = st.selectbox(
-            "Filter by Team", 
+            "Filter by Team",
             ["All Teams"] + sorted(list(set([p.team_name for p in people if p.team_name is not None]))),
             index=0
         )
@@ -71,10 +71,9 @@ def render_people_list():
             use_container_width=True, 
             hide_index=True,
             column_config={
-                "ID": st.column_config.NumberColumn(
+                "ID": st.column_config.TextColumn(
                     "ID",
                     help="Person ID",
-                    format="%d",
                     width="small"
                 )
             }
