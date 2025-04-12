@@ -1,6 +1,7 @@
 import duckdb
 import os
 import time
+import json
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict, Any, Tuple
 from functools import wraps
@@ -15,6 +16,14 @@ from app.models.data_models import (
     MonthlyDemandAllocation,
     TeamAllocation
 )
+from app.database.init_db import compute_monthly_allocations
+
+# Add JSON serialization support for timedelta objects
+class TimedeltaJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, timedelta):
+            return str(obj)
+        return super().default(obj)
 
 @contextlib.contextmanager
 def get_db_connection(read_only: bool = False):
@@ -91,7 +100,6 @@ def get_people(conn, team_id: Optional[int] = None) -> List[Person]:
             p.id, 
             p.name, 
             p.role, 
-            p.skills, 
             p.team_id,
             t.name as team_name
         FROM people p
@@ -109,14 +117,14 @@ def get_people(conn, team_id: Optional[int] = None) -> List[Person]:
     
     people = []
     for row in result:
-        people.append(Person(
+        person = Person(
             id=row[0],
             name=row[1],
             role=row[2],
-            skills=row[3].split(",") if row[3] else [],
-            team_id=row[4],
-            team_name=row[5]
-        ))
+            team_id=row[3],
+            team_name=row[4]
+        )
+        people.append(person)
     
     return people
 
@@ -136,7 +144,6 @@ def get_person(conn, person_id: int) -> Optional[Person]:
             p.id, 
             p.name, 
             p.role, 
-            p.skills, 
             p.team_id,
             t.name as team_name
         FROM people p
@@ -151,9 +158,8 @@ def get_person(conn, person_id: int) -> Optional[Person]:
             id=result[0],
             name=result[1],
             role=result[2],
-            skills=result[3].split(",") if result[3] else [],
-            team_id=result[4],
-            team_name=result[5]
+            team_id=result[3],
+            team_name=result[4]
         )
     
     return None
@@ -169,8 +175,6 @@ def save_person(conn, person: Person) -> int:
     Returns:
         The ID of the saved person
     """
-    skills_str = ",".join(person.skills) if person.skills else ""
-    
     if person.id:
         # Check if person has allocations before updating team
         current_person = get_person(person.id)
@@ -187,19 +191,19 @@ def save_person(conn, person: Person) -> int:
         # Update existing person
         query = """
             UPDATE people
-            SET name = ?, role = ?, skills = ?, team_id = ?
+            SET name = ?, role = ?, team_id = ?
             WHERE id = ?
         """
-        conn.execute(query, [person.name, person.role, skills_str, person.team_id, person.id])
+        conn.execute(query, [person.name, person.role, person.team_id, person.id])
         person_id = person.id
     else:
         # Insert new person
         query = """
-            INSERT INTO people (name, role, skills, team_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO people (name, role, team_id)
+            VALUES (?, ?, ?)
             RETURNING id
         """
-        result = conn.execute(query, [person.name, person.role, skills_str, person.team_id]).fetchone()
+        result = conn.execute(query, [person.name, person.role, person.team_id]).fetchone()
         person_id = result[0]
     
     return person_id
@@ -531,7 +535,6 @@ def get_demands(conn, project_id: Optional[int] = None, status: Optional[str] = 
             d.project_id, 
             p.name as project_name,
             d.role_required, 
-            d.skills_required, 
             d.fte_required, 
             d.start_date, 
             d.end_date, 
@@ -561,66 +564,76 @@ def get_demands(conn, project_id: Optional[int] = None, status: Optional[str] = 
     
     demands = []
     for row in result:
-        demands.append(Demand(
+        demand = Demand(
             id=row[0],
             project_id=row[1],
             project_name=row[2],
             role_required=row[3],
-            skills_required=row[4].split(",") if row[4] else [],
-            fte_required=row[5],
-            start_date=row[6],
-            end_date=row[7],
-            priority=row[8],
-            status=row[9]
-        ))
+            fte_required=row[4],
+            start_date=row[5],
+            end_date=row[6],
+            priority=row[7],
+            status=row[8]
+        )
+        demands.append(demand)
     
     return demands
 
-@with_connection(read_only=True)
-def get_demand(conn, demand_id: int) -> Optional[Demand]:
+def get_demand(demand_id: int, conn=None) -> Optional[Demand]:
     """
     Get a demand by ID.
     
     Args:
         demand_id: The ID of the demand to retrieve
+        conn: Optional database connection. If not provided, a new connection will be created.
         
     Returns:
         Demand object if found, None otherwise
     """
-    query = """
-        SELECT 
-            d.id, 
-            d.project_id, 
-            p.name as project_name,
-            d.role_required, 
-            d.skills_required, 
-            d.fte_required, 
-            d.start_date, 
-            d.end_date, 
-            d.priority,
-            d.status
-        FROM demands d
-        JOIN projects p ON d.project_id = p.id
-        WHERE d.id = ?
-    """
+    should_close_conn = False
+    if conn is None:
+        conn = get_db_connection(read_only=True)
+        should_close_conn = True
     
-    result = conn.execute(query, [demand_id]).fetchone()
-    
-    if result:
-        return Demand(
-            id=result[0],
-            project_id=result[1],
-            project_name=result[2],
-            role_required=result[3],
-            skills_required=result[4].split(",") if result[4] else [],
-            fte_required=result[5],
-            start_date=result[6],
-            end_date=result[7],
-            priority=result[8],
-            status=result[9]
-        )
-    
-    return None
+    try:
+        query = """
+            SELECT 
+                d.id, 
+                d.project_id, 
+                p.name as project_name,
+                d.role_required, 
+                d.fte_required, 
+                d.start_date, 
+                d.end_date, 
+                d.priority,
+                d.status
+            FROM demands d
+            JOIN projects p ON d.project_id = p.id
+            WHERE d.id = ?
+        """
+        
+        result = conn.execute(query, [demand_id]).fetchone()
+        
+        if result:
+            return Demand(
+                id=result[0],
+                project_id=result[1],
+                project_name=result[2],
+                role_required=result[3],
+                fte_required=result[4],
+                start_date=result[5],
+                end_date=result[6],
+                priority=result[7],
+                status=result[8]
+            )
+        
+        return None
+    finally:
+        if should_close_conn and conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 @with_connection()
 def save_demand(conn, demand: Demand) -> int:
@@ -633,13 +646,11 @@ def save_demand(conn, demand: Demand) -> int:
     Returns:
         The ID of the saved demand
     """
-    skills_str = ",".join(demand.skills_required) if demand.skills_required else ""
-    
     if demand.id:
         # Update existing demand
         query = """
             UPDATE demands
-            SET project_id = ?, role_required = ?, skills_required = ?, 
+            SET project_id = ?, role_required = ?, 
                 fte_required = ?, start_date = ?, end_date = ?, 
                 priority = ?, status = ?
             WHERE id = ?
@@ -647,7 +658,6 @@ def save_demand(conn, demand: Demand) -> int:
         conn.execute(query, [
             demand.project_id, 
             demand.role_required, 
-            skills_str, 
             demand.fte_required,
             demand.start_date,
             demand.end_date,
@@ -660,16 +670,15 @@ def save_demand(conn, demand: Demand) -> int:
         # Insert new demand
         query = """
             INSERT INTO demands (
-                project_id, role_required, skills_required, fte_required, 
+                project_id, role_required, fte_required, 
                 start_date, end_date, priority, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """
         result = conn.execute(query, [
             demand.project_id, 
             demand.role_required, 
-            skills_str, 
             demand.fte_required,
             demand.start_date,
             demand.end_date,
@@ -725,8 +734,7 @@ def get_open_demands_count(conn) -> int:
     return count
 
 # Allocation queries
-@with_connection(read_only=True)
-def get_allocations(conn, person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None) -> List[Allocation]:
+def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None, conn=None) -> List[Allocation]:
     """
     Get all allocations, optionally filtered by person_id, project_id, or demand_id.
     
@@ -734,66 +742,84 @@ def get_allocations(conn, person_id: Optional[int] = None, project_id: Optional[
         person_id: Optional person ID to filter by
         project_id: Optional project ID to filter by
         demand_id: Optional demand ID to filter by
+        conn: Optional database connection. If not provided, a new connection will be created.
         
     Returns:
         List of Allocation objects
     """
-    query = """
-        SELECT 
-            a.id, 
-            a.person_id, 
-            p.name as person_name,
-            a.project_id, 
-            pr.name as project_name,
-            a.demand_id,
-            a.fte_allocated, 
-            a.start_date, 
-            a.end_date, 
-            a.notes
-        FROM allocations a
-        JOIN people p ON a.person_id = p.id
-        JOIN projects pr ON a.project_id = pr.id
-        LEFT JOIN demands d ON a.demand_id = d.id
-    """
+    should_close_conn = False
+    if conn is None:
+        conn = get_db_connection(read_only=True)
+        should_close_conn = True
     
-    conditions = []
-    params = []
-    
-    if person_id is not None:
-        conditions.append("a.person_id = ?")
-        params.append(person_id)
-    
-    if project_id is not None:
-        conditions.append("a.project_id = ?")
-        params.append(project_id)
-    
-    if demand_id is not None:
-        conditions.append("a.demand_id = ?")
-        params.append(demand_id)
-    
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    
-    query += " ORDER BY a.start_date"
-    
-    result = conn.execute(query, params).fetchall()
-    
-    allocations = []
-    for row in result:
-        allocations.append(Allocation(
-            id=row[0],
-            person_id=row[1],
-            person_name=row[2],
-            project_id=row[3],
-            project_name=row[4],
-            demand_id=row[5],
-            fte_allocated=row[6],
-            start_date=row[7],
-            end_date=row[8],
-            notes=row[9]
-        ))
-    
-    return allocations
+    try:
+        query = """
+            SELECT 
+                a.id, 
+                a.person_id, 
+                p.name as person_name,
+                a.project_id, 
+                pr.name as project_name,
+                a.demand_id,
+                a.fte_allocated, 
+                a.start_date, 
+                a.end_date, 
+                a.notes
+            FROM allocations a
+            JOIN people p ON a.person_id = p.id
+            JOIN projects pr ON a.project_id = pr.id
+            LEFT JOIN demands d ON a.demand_id = d.id
+        """
+        
+        conditions = []
+        params = []
+        
+        if person_id is not None:
+            conditions.append("a.person_id = ?")
+            params.append(person_id)
+        
+        if project_id is not None:
+            conditions.append("a.project_id = ?")
+            params.append(project_id)
+        
+        if demand_id is not None:
+            conditions.append("a.demand_id = ?")
+            params.append(demand_id)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY a.start_date"
+        
+        # If conn is a context manager, use it in a with statement
+        if hasattr(conn, '__enter__'):
+            with conn as c:
+                result = c.execute(query, params).fetchall()
+        else:
+            result = conn.execute(query, params).fetchall()
+        
+        allocations = []
+        for row in result:
+            allocations.append(Allocation(
+                id=row[0],
+                person_id=row[1],
+                person_name=row[2],
+                project_id=row[3],
+                project_name=row[4],
+                demand_id=row[5],
+                fte_allocated=row[6],
+                start_date=row[7],
+                end_date=row[8],
+                notes=row[9]
+            ))
+        
+        return allocations
+    finally:
+        if should_close_conn and conn and not hasattr(conn, '__enter__'):
+            try:
+                conn.close()
+            except:
+                pass
 
 @with_connection(read_only=True)
 def get_allocation(conn, allocation_id: int) -> Optional[Allocation]:
@@ -843,8 +869,55 @@ def get_allocation(conn, allocation_id: int) -> Optional[Allocation]:
     
     return None
 
-@with_connection()
-def save_allocation(conn, allocation: Allocation) -> int:
+def update_demand_status(demand_id: int, conn=None) -> None:
+    """
+    Update the status of a demand based on its allocations.
+    
+    Args:
+        demand_id: The ID of the demand to update
+        conn: Optional database connection. If not provided, a new connection will be created.
+    """
+    should_close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close_conn = True
+    
+    try:
+        # Get the demand
+        demand = get_demand(demand_id, conn)
+        if not demand:
+            return
+        
+        # Get all allocations for this demand
+        allocations = get_allocations(demand_id=demand_id, conn=conn)
+        
+        # Calculate total allocated FTE
+        total_allocated = 0
+        for allocation in allocations:
+            total_allocated += allocation.fte_allocated
+        
+        # Update demand status based on allocated FTE
+        new_status = demand.status
+        if total_allocated == 0:
+            new_status = 'open'
+        elif total_allocated < demand.fte_required:
+            new_status = 'partially_filled'
+        else:
+            new_status = 'filled'
+        
+        # Update the demand
+        conn.execute(
+            "UPDATE demands SET status = ? WHERE id = ?",
+            [new_status, demand_id]
+        )
+    finally:
+        if should_close_conn and conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+def save_allocation(allocation: Allocation) -> int:
     """
     Save an allocation to the database.
     
@@ -854,54 +927,78 @@ def save_allocation(conn, allocation: Allocation) -> int:
     Returns:
         The ID of the saved allocation
     """
-    if allocation.id:
-        # Update existing allocation
-        query = """
-            UPDATE allocations
-            SET person_id = ?, project_id = ?, demand_id = ?, 
-                fte_allocated = ?, start_date = ?, end_date = ?, notes = ?
-            WHERE id = ?
-        """
-        conn.execute(query, [
-            allocation.person_id, 
-            allocation.project_id, 
-            allocation.demand_id, 
-            allocation.fte_allocated,
-            allocation.start_date,
-            allocation.end_date,
-            allocation.notes,
-            allocation.id
-        ])
-        allocation_id = allocation.id
-    else:
-        # Insert new allocation
-        query = """
-            INSERT INTO allocations (
-                person_id, project_id, demand_id, fte_allocated, 
-                start_date, end_date, notes
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            RETURNING id
-        """
-        result = conn.execute(query, [
-            allocation.person_id, 
-            allocation.project_id, 
-            allocation.demand_id, 
-            allocation.fte_allocated,
-            allocation.start_date,
-            allocation.end_date,
-            allocation.notes
-        ]).fetchone()
-        allocation_id = result[0]
-    
-    # If allocation is linked to a demand, update the demand status
-    if allocation.demand_id:
-        update_demand_status(allocation.demand_id)
-    
-    # Update monthly allocations
-    update_monthly_allocations()
-    
-    return allocation_id
+    with get_db_connection() as conn:
+        if allocation.id:
+            # Update existing allocation
+            query = """
+                UPDATE allocations
+                SET person_id = ?, project_id = ?, demand_id = ?, 
+                    fte_allocated = ?, start_date = ?, end_date = ?, notes = ?
+                WHERE id = ?
+            """
+            conn.execute(query, [
+                allocation.person_id, 
+                allocation.project_id, 
+                allocation.demand_id, 
+                allocation.fte_allocated,
+                allocation.start_date,
+                allocation.end_date,
+                allocation.notes,
+                allocation.id
+            ])
+            allocation_id = allocation.id
+        else:
+            # Insert new allocation
+            query = """
+                INSERT INTO allocations (
+                    person_id, project_id, demand_id, fte_allocated, 
+                    start_date, end_date, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+            """
+            result = conn.execute(query, [
+                allocation.person_id, 
+                allocation.project_id, 
+                allocation.demand_id, 
+                allocation.fte_allocated,
+                allocation.start_date,
+                allocation.end_date,
+                allocation.notes
+            ]).fetchone()
+            allocation_id = result[0]
+        
+        # If allocation is linked to a demand, update the demand status
+        if allocation.demand_id:
+            # Get demand using the same connection
+            demand = get_demand(allocation.demand_id, conn)
+            if demand:
+                # Calculate total allocated FTE for this demand
+                total_allocated = conn.execute("""
+                    SELECT COALESCE(SUM(fte_allocated), 0)
+                    FROM allocations
+                    WHERE demand_id = ?
+                """, [allocation.demand_id]).fetchone()[0]
+                
+                # Update demand status based on allocation
+                if total_allocated >= demand.fte_required:
+                    new_status = "filled"
+                elif total_allocated > 0:
+                    new_status = "partially_filled"
+                else:
+                    new_status = "open"
+                
+                # Update demand status
+                conn.execute("""
+                    UPDATE demands
+                    SET status = ?
+                    WHERE id = ?
+                """, [new_status, allocation.demand_id])
+        
+        # Update monthly allocations within the same connection
+        compute_monthly_allocations(conn)
+        
+        return allocation_id
 
 @with_connection()
 def delete_allocation(conn, allocation_id: int) -> bool:
@@ -936,42 +1033,6 @@ def delete_allocation(conn, allocation_id: int) -> bool:
     update_monthly_allocations()
     
     return True
-
-@with_connection()
-def update_demand_status(conn, demand_id: int) -> None:
-    """
-    Update the status of a demand based on its allocations.
-    
-    Args:
-        demand_id: The ID of the demand to update
-    """
-    # Get the demand
-    demand = get_demand(demand_id)
-    if not demand:
-        return
-    
-    # Get all allocations for this demand
-    allocations = get_allocations(demand_id=demand_id)
-    
-    # Calculate total allocated FTE
-    total_allocated = 0
-    for allocation in allocations:
-        total_allocated += allocation.fte_allocated
-    
-    # Update demand status based on allocated FTE
-    new_status = demand.status
-    if total_allocated == 0:
-        new_status = 'open'
-    elif total_allocated < demand.fte_required:
-        new_status = 'partially_filled'
-    else:
-        new_status = 'filled'
-    
-    # Update the demand
-    conn.execute(
-        "UPDATE demands SET status = ? WHERE id = ?",
-        [new_status, demand_id]
-    )
 
 # Monthly demand and allocation queries
 @with_connection(read_only=True)
@@ -1049,5 +1110,4 @@ def update_monthly_allocations(conn) -> None:
     """Update the monthly_demand_allocation table with current data."""
     # This function will be implemented in the init_db.py file
     # and will be called whenever demand or allocation data changes
-    from app.database.init_db import compute_monthly_allocations
     compute_monthly_allocations(conn) 

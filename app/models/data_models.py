@@ -5,12 +5,19 @@ from typing import List, Optional, Dict, Any
 @dataclass
 class Person:
     """Person model representing an employee/resource."""
-    name: str
-    role: str
-    skills: List[str] = field(default_factory=list)
+    id: Optional[int] = None
+    name: str = ""
+    role: str = ""
     team_id: Optional[int] = None
     team_name: Optional[str] = None
-    id: Optional[int] = None
+
+    def __init__(self, id: Optional[int] = None, name: str = "", role: str = "", 
+                 team_id: Optional[int] = None, team_name: Optional[str] = None):
+        self.id = id
+        self.name = name
+        self.role = role
+        self.team_id = team_id
+        self.team_name = team_name
 
 @dataclass
 class Team:
@@ -32,16 +39,28 @@ class Project:
 @dataclass
 class Demand:
     """Demand model representing a request for resources on a project."""
-    project_id: int
-    role_required: str
-    fte_required: float
-    start_date: date
-    end_date: date
+    id: Optional[int] = None
+    project_id: int = 0
+    project_name: Optional[str] = None
+    role_required: str = ""
+    fte_required: float = 0.0
+    start_date: date = field(default_factory=date.today)
+    end_date: date = field(default_factory=date.today)
     priority: int = 1  # 1-5, where 5 is highest
     status: str = "open"  # open, partially_filled, filled, cancelled
-    skills_required: List[str] = field(default_factory=list)
-    project_name: Optional[str] = None
-    id: Optional[int] = None
+
+    def __init__(self, id: Optional[int] = None, project_id: int = 0, role_required: str = "", 
+                 fte_required: float = 0.0, start_date: date = None, end_date: date = None, 
+                 priority: int = 1, status: str = "open", project_name: Optional[str] = None):
+        self.id = id
+        self.project_id = project_id
+        self.role_required = role_required
+        self.fte_required = fte_required
+        self.start_date = start_date or date.today()
+        self.end_date = end_date or date.today()
+        self.priority = priority
+        self.status = status
+        self.project_name = project_name
 
 @dataclass
 class Allocation:

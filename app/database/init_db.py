@@ -47,7 +47,6 @@ def create_tables(conn):
         id INTEGER PRIMARY KEY,
         name VARCHAR NOT NULL,
         role VARCHAR,
-        skills VARCHAR,
         team_id INTEGER,
         FOREIGN KEY (team_id) REFERENCES teams(id)
     )
@@ -71,7 +70,6 @@ def create_tables(conn):
         id INTEGER PRIMARY KEY,
         project_id INTEGER NOT NULL,
         role_required VARCHAR,
-        skills_required VARCHAR,
         fte_required FLOAT NOT NULL,
         start_date DATE NOT NULL,
         end_date DATE NOT NULL,
@@ -126,19 +124,19 @@ def add_sample_data(conn):
     
     # Add People
     people = [
-        (1, "John Smith", "Software Engineer", "Python,JavaScript,React", 1),
-        (2, "Jane Doe", "Senior Developer", "Java,Kubernetes,Docker", 1),
-        (3, "Bob Johnson", "UX Designer", "Figma,Sketch,UI Design", 2),
-        (4, "Alice Brown", "Product Manager", "Agile,Roadmapping,User Research", 3),
-        (5, "Charlie Davis", "Data Scientist", "Python,R,Machine Learning,SQL", 4),
-        (6, "Eva Wilson", "Backend Developer", "Java,Spring,Databases", 1),
-        (7, "Frank Miller", "Frontend Developer", "JavaScript,React,CSS,HTML", 1),
-        (8, "Grace Lee", "UI Designer", "Illustrator,Photoshop,Wireframing", 2)
+        (1, "John Smith", "Software Engineer", 1),
+        (2, "Jane Doe", "Senior Developer", 1),
+        (3, "Bob Johnson", "UX Designer", 2),
+        (4, "Alice Brown", "Product Manager", 3),
+        (5, "Charlie Davis", "Data Scientist", 4),
+        (6, "Eva Wilson", "Backend Developer", 1),
+        (7, "Frank Miller", "Frontend Developer", 1),
+        (8, "Grace Lee", "UI Designer", 2)
     ]
     
     conn.executemany("""
-    INSERT INTO people (id, name, role, skills, team_id)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO people (id, name, role, team_id)
+    VALUES (?, ?, ?, ?)
     """, people)
     
     # Add Projects
@@ -157,17 +155,17 @@ def add_sample_data(conn):
     
     # Add Demands
     demands = [
-        (1, 1, "Frontend Developer", "React,JavaScript,HTML,CSS", 1.0, today - timedelta(days=30), today + timedelta(days=90), 3, "partially_filled"),
-        (2, 1, "UX Designer", "Figma,Sketch,User Research", 0.5, today - timedelta(days=30), today + timedelta(days=45), 2, "filled"),
-        (3, 2, "Mobile Developer", "Swift,Kotlin,React Native", 2.0, today - timedelta(days=15), today + timedelta(days=120), 4, "partially_filled"),
-        (4, 3, "Data Engineer", "Python,SQL,ETL,Spark", 1.0, today + timedelta(days=15), today + timedelta(days=180), 3, "open"),
-        (5, 3, "Machine Learning Engineer", "Python,ML,TensorFlow", 0.5, today + timedelta(days=45), today + timedelta(days=180), 2, "open"),
-        (6, 4, "Backend Developer", "Java,Spring,API Design", 1.0, today + timedelta(days=45), today + timedelta(days=90), 3, "open")
+        (1, 1, "Frontend Developer", 1.0, today - timedelta(days=30), today + timedelta(days=90), 3, "partially_filled"),
+        (2, 1, "UX Designer", 0.5, today - timedelta(days=30), today + timedelta(days=45), 2, "filled"),
+        (3, 2, "Mobile Developer", 2.0, today - timedelta(days=15), today + timedelta(days=120), 4, "partially_filled"),
+        (4, 3, "Data Engineer", 1.0, today + timedelta(days=15), today + timedelta(days=180), 3, "open"),
+        (5, 3, "Machine Learning Engineer", 0.5, today + timedelta(days=45), today + timedelta(days=180), 2, "open"),
+        (6, 4, "Backend Developer", 1.0, today + timedelta(days=45), today + timedelta(days=90), 3, "open")
     ]
     
     conn.executemany("""
-    INSERT INTO demands (id, project_id, role_required, skills_required, fte_required, start_date, end_date, priority, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO demands (id, project_id, role_required, fte_required, start_date, end_date, priority, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, demands)
     
     # Add Allocations

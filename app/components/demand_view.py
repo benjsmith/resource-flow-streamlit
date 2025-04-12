@@ -57,7 +57,6 @@ def render_demand_view():
                     "ID": demand.id,
                     "Project": project_map.get(demand.project_id, "Unknown"),
                     "Role Required": demand.role_required,
-                    "Skills Required": ", ".join(demand.skills_required) if demand.skills_required else "",
                     "FTE Required": demand.fte_required,
                     "Start Date": demand.start_date,
                     "End Date": demand.end_date,
@@ -138,11 +137,10 @@ def render_demand_view():
                     id=None, 
                     project_id=None,
                     role_required="", 
-                    skills_required=[], 
                     fte_required=1.0, 
                     start_date=date.today(), 
                     end_date=date.today() + timedelta(days=90), 
-                    priority="medium",
+                    priority=1,
                     status="unfilled"
                 )
             editing = True
@@ -153,11 +151,10 @@ def render_demand_view():
                 id=None, 
                 project_id=None,
                 role_required="", 
-                skills_required=[], 
                 fte_required=1.0, 
                 start_date=today, 
                 end_date=today + timedelta(days=90), 
-                priority="medium",
+                priority=1,
                 status="unfilled"
             )
             editing = False
@@ -194,15 +191,6 @@ def render_demand_view():
             
             role_required = st.text_input("Role Required", value=demand.role_required or "")
             
-            # Convert skills list to string for display and back to list for saving
-            skills_text = ", ".join(demand.skills_required) if demand.skills_required else ""
-            skills_required = st.text_area(
-                "Skills Required (comma-separated)", 
-                value=skills_text,
-                height=100,
-                help="Enter skills separated by commas"
-            )
-            
             fte_required = st.number_input("FTE Required", min_value=0.1, max_value=10.0, value=demand.fte_required or 1.0, step=0.1)
             
             col1, col2 = st.columns(2)
@@ -214,10 +202,11 @@ def render_demand_view():
             
             col1, col2 = st.columns(2)
             with col1:
-                priority = st.selectbox(
-                    "Priority",
-                    options=["high", "medium", "low"],
-                    index=["high", "medium", "low"].index(demand.priority or "medium")
+                priority = st.number_input(
+                    "Priority (1-5)", 
+                    min_value=1,
+                    max_value=5,
+                    value=demand.priority if isinstance(demand.priority, int) else 1
                 )
             
             with col2:
@@ -240,15 +229,11 @@ def render_demand_view():
                     st.error("Start Date must be before End Date")
                     return
                 
-                # Convert skills text back to list
-                skills_list = [skill.strip() for skill in skills_required.split(",") if skill.strip()]
-                
                 # Create or update demand object
                 demand = Demand(
                     id=demand.id,
                     project_id=demand.project_id,
                     role_required=role_required,
-                    skills_required=skills_list,
                     fte_required=fte_required,
                     start_date=start_date,
                     end_date=end_date,
@@ -278,14 +263,5 @@ def render_demand_view():
             # Create Gantt chart
             fig = create_demand_gantt(demands)
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Add legend explanation
-            st.markdown("""
-            **Legend:**
-            - 🔴 Open - No resources allocated
-            - 🟠 Partially Filled - Some resources allocated
-            - 🟢 Filled - All required resources allocated
-            - ⚫ Cancelled - Demand no longer needed
-            """)
         else:
             st.info("No demands found. Please add some demands to see the timeline.") 

@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import sys
+import json
+import plotly
 from datetime import date, timedelta
 
 # Add the parent directory to the Python path so 'app' can be found
@@ -14,6 +16,19 @@ from app.components.allocations_view import render_allocations_view
 from app.components.dashboard import render_dashboard
 from app.database.init_db import initialize_database
 from app.database.migrate_db import migrate_database
+
+# Register timedelta encoder for Plotly
+from _plotly_utils.utils import PlotlyJSONEncoder
+
+# Monkey patch the default method to handle timedelta
+original_default = PlotlyJSONEncoder.default
+
+def patched_default(self, obj):
+    if isinstance(obj, timedelta):
+        return str(obj)
+    return original_default(self, obj)
+
+PlotlyJSONEncoder.default = patched_default
 
 def check_database_initialization():
     """Check if the database is initialized and initialize if it doesn't exist."""
@@ -58,10 +73,23 @@ def create_sidebar():
         st.header("Navigation")
         options = ["Dashboard", "Projects", "People", "Teams", "Demands", "Allocations"]
         
-        selection = st.radio("Go to", options, key="sidebar_nav", index=options.index(st.session_state.sidebar_selection))
+        # Define a callback function to update the selection only
+        def on_nav_change():
+            st.session_state.sidebar_selection = st.session_state.sidebar_nav
         
-        # Update sidebar selection in session state
-        st.session_state.sidebar_selection = selection
+        # Use the radio button with the callback
+        selection = st.radio(
+            "Go to", 
+            options, 
+            key="sidebar_nav", 
+            index=options.index(st.session_state.sidebar_selection),
+            on_change=on_nav_change
+        )
+        
+        # Check if navigation has changed and trigger a rerun at the top level
+        if st.session_state.sidebar_selection != selection:
+            st.session_state.sidebar_selection = selection
+            st.rerun()
         
         # App info
         st.sidebar.markdown("---")

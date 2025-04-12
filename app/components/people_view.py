@@ -57,7 +57,6 @@ def render_people_list():
                 "Name": person.name,
                 "Role": person.role,
                 "Team": person.team_name or "No Team",
-                "Skills": ", ".join(person.skills) if person.skills else ""
             })
         
         df = pd.DataFrame(people_data)
@@ -197,7 +196,6 @@ def render_people_form():
         person = Person(
             name="",
             role="",
-            skills=[],
             team_id=None,
             team_name=None,
             id=None
@@ -233,22 +231,9 @@ def render_people_form():
                     break
         
         # Skills as a comma-separated list with tagging UI
-        skills_input = st.text_input(
-            "Skills (comma-separated)", 
-            value=", ".join(person.skills) if person.skills else "",
-            help="Enter skills separated by commas (e.g., Python, Java, Project Management)"
-        )
+        # Removing skills input since skill attribute has been removed from Person model
         
-        # Process skills
-        skills = [skill.strip() for skill in skills_input.split(",")] if skills_input else []
-        
-        # Display the current skills as tags
-        if skills:
-            st.write("Current skills:")
-            cols = st.columns(4)
-            for i, skill in enumerate(skills):
-                if skill:  # Only display non-empty skills
-                    cols[i % 4].markdown(f"<span style='background-color:#f0f2f6;padding:5px;border-radius:5px;margin:2px;white-space:nowrap;display:inline-block;'>{skill}</span>", unsafe_allow_html=True)
+        # Display the current skills as tags - removing this section
         
         col1, col2 = st.columns(2)
         with col1:
@@ -265,7 +250,6 @@ def render_people_form():
                 person.name = name
                 person.role = role
                 person.team_id = team_id
-                person.skills = [s for s in skills if s]  # Remove empty skills
                 
                 # Save to database
                 person_id = db.save_person(person)
