@@ -236,7 +236,7 @@ def render_project_form():
                 project.start_date = start_date
                 project.end_date = end_date
                 project.status = status
-                project.project_manager = project_manager_id
+                project.project_manager_id = project_manager_id
                 project.project_type = project_type
                 project.lead_team_id = lead_team_id
                 

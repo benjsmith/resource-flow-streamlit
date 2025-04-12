@@ -63,8 +63,8 @@ def migrate_database():
         if "project_manager" in column_names and "project_manager_id" not in column_names:
             print("Converting project_manager from string to project_manager_id reference...")
             
-            # First add the project_manager_id column
-            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER REFERENCES people(id)")
+            # First add the project_manager_id column (without foreign key constraint)
+            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER")
             
             # Then try to match project_manager names to people names
             # Get all projects with project_manager set
@@ -89,8 +89,8 @@ def migrate_database():
             # Don't drop the old column yet - we'll do that in a future migration
             project_columns_added = True
         elif "project_manager_id" not in column_names:
-            # Add project_manager_id column if it doesn't exist
-            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER REFERENCES people(id)")
+            # Add project_manager_id column if it doesn't exist (without foreign key constraint)
+            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id INTEGER")
             project_columns_added = True
         
         # Add project_type column if it doesn't exist
@@ -98,9 +98,9 @@ def migrate_database():
             conn.execute("ALTER TABLE projects ADD COLUMN project_type VARCHAR")
             project_columns_added = True
         
-        # Add lead_team_id column if it doesn't exist
+        # Add lead_team_id column if it doesn't exist (without foreign key constraint)
         if "lead_team_id" not in column_names:
-            conn.execute("ALTER TABLE projects ADD COLUMN lead_team_id INTEGER REFERENCES teams(id)")
+            conn.execute("ALTER TABLE projects ADD COLUMN lead_team_id INTEGER")
             project_columns_added = True
         
         if project_columns_added:
