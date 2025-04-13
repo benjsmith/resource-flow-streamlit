@@ -85,22 +85,46 @@ def render_demand_list():
         demand = next((d for d in demands if d.id == demand_id), None)
         
         if demand:
-            st.warning(f"Are you sure you want to delete the demand for {demand.role_required} in {demand.project_name}?")
+            # First confirmation - check if demand has allocations
+            has_allocations = db.get_allocations(demand_id=demand_id)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Yes, Delete", type="primary"):
-                    if db.delete_demand(demand_id):
-                        st.success("Demand deleted successfully!")
+            if has_allocations:
+                st.warning(f"This demand has {len(has_allocations)} associated allocation(s). Would you like to delete the demand and its allocations?")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Yes, Delete All", type="primary"):
+                        try:
+                            if db.delete_demand(demand_id, delete_allocations=True):
+                                st.success("Demand and associated allocations deleted successfully!")
+                                st.session_state.confirm_delete_demand = None
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete demand: {str(e)}")
+                
+                with col2:
+                    if st.button("Cancel"):
                         st.session_state.confirm_delete_demand = None
                         st.rerun()
-                    else:
-                        st.error("Failed to delete demand.")
-            
-            with col2:
-                if st.button("Cancel"):
-                    st.session_state.confirm_delete_demand = None
-                    st.rerun()
+            else:
+                # If no allocations, proceed with simple confirmation
+                st.warning(f"Are you sure you want to delete the demand for {demand.role_required} in {demand.project_name}?")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Yes, Delete", type="primary"):
+                        try:
+                            if db.delete_demand(demand_id):
+                                st.success("Demand deleted successfully!")
+                                st.session_state.confirm_delete_demand = None
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete demand: {str(e)}")
+                
+                with col2:
+                    if st.button("Cancel"):
+                        st.session_state.confirm_delete_demand = None
+                        st.rerun()
     
     # Show form for adding/editing a demand
     if "show_demand_form" in st.session_state and st.session_state.show_demand_form:
@@ -149,103 +173,113 @@ def render_demand_form(demand=None):
     
     st.subheader(form_title)
     
+    # Initialize form data
+    form_data = {
+        "project_name": demand.project_name if is_edit else "",
+        "role_required": demand.role_required if is_edit else "",
+        "fte_required": demand.fte_required if is_edit else 1.0,
+        "start_date": demand.start_date if is_edit and demand.start_date else date.today(),
+        "end_date": demand.end_date if is_edit and demand.end_date else date.today(),
+        "status": demand.status if is_edit else "open",
+        "priority": demand.priority if is_edit else 1
+    }
+    
+    # Get projects for dropdown
+    projects = db.get_projects()
+    project_options = [p.name for p in projects]
+    
+    # Create the form
     with st.form(key="demand_form"):
-        # Get projects for dropdown
-        projects = db.get_projects()
-        project_options = [p.name for p in projects]
-        
+        # Project selection
         if is_edit:
             # For editing, find the index of the current project
             project_index = project_options.index(demand.project_name) if demand.project_name in project_options else 0
-            project_name = st.selectbox("Project", options=project_options, index=project_index)
+            form_data["project_name"] = st.selectbox("Project", options=project_options, index=project_index)
         else:
             # For adding, just show the dropdown
-            project_name = st.selectbox("Project", options=project_options, index=0 if project_options else None)
+            form_data["project_name"] = st.selectbox("Project", options=project_options, index=0 if project_options else None)
         
         # Get the project ID from the name
-        project_id = next((p.id for p in projects if p.name == project_name), None)
+        project_id = next((p.id for p in projects if p.name == form_data["project_name"]), None)
         
         # Form inputs
-        role_required = st.text_input("Role Required", value=demand.role_required if is_edit else "")
-        fte_required = st.number_input("FTE Required", min_value=0.1, max_value=5.0, value=demand.fte_required if is_edit else 1.0, step=0.1)
+        form_data["role_required"] = st.text_input("Role Required", value=form_data["role_required"])
+        form_data["fte_required"] = st.number_input("FTE Required", min_value=0.1, max_value=5.0, value=form_data["fte_required"], step=0.1)
         
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("Start Date", value=demand.start_date if is_edit and demand.start_date else date.today())
+            form_data["start_date"] = st.date_input("Start Date", value=form_data["start_date"])
         with col2:
-            end_date = st.date_input("End Date", value=demand.end_date if is_edit and demand.end_date else date.today())
+            form_data["end_date"] = st.date_input("End Date", value=form_data["end_date"])
         
         status_options = ["open", "filled", "partially_filled", "cancelled"]
-        status = st.selectbox(
+        status_index = status_options.index(form_data["status"]) if form_data["status"] in status_options else 0
+        form_data["status"] = st.selectbox(
             "Status", 
             options=status_options,
-            index=status_options.index(demand.status) if is_edit else 0
+            index=status_index
         )
         
-        priority_options = ["high", "medium", "low"]
-        priority = st.selectbox(
+        priority_options = [1, 2, 3, 4, 5]  # 1-5, where 5 is highest
+        priority_index = priority_options.index(form_data["priority"]) if form_data["priority"] in priority_options else 0
+        form_data["priority"] = st.selectbox(
             "Priority", 
             options=priority_options,
-            index=priority_options.index(demand.priority) if is_edit else 0
+            index=priority_index
         )
-        
-        notes = st.text_area("Notes", value=demand.notes if is_edit and demand.notes else "")
         
         col1, col2 = st.columns(2)
         with col1:
             submit_button = st.form_submit_button("Save", use_container_width=True)
         with col2:
             cancel_button = st.form_submit_button("Cancel", use_container_width=True)
-        
-        if submit_button:
-            if not project_id:
-                st.error("Please select a project.")
-                return
-            
-            if not role_required:
-                st.error("Role Required is mandatory.")
-                return
-            
-            if start_date > end_date:
-                st.error("Start date must be before end date.")
-                return
-            
-            # Create or update demand
-            if is_edit:
-                demand_obj = Demand(
-                    id=demand.id,
-                    project_id=project_id,
-                    role_required=role_required,
-                    fte_required=fte_required,
-                    start_date=start_date,
-                    end_date=end_date,
-                    status=status,
-                    priority=priority,
-                    notes=notes
-                )
-            else:
-                demand_obj = Demand(
-                    id=str(uuid.uuid4()),
-                    project_id=project_id,
-                    role_required=role_required,
-                    fte_required=fte_required,
-                    start_date=start_date,
-                    end_date=end_date,
-                    status=status,
-                    priority=priority,
-                    notes=notes
-                )
-            
-            # Save to database
-            if db.save_demand(demand_obj):
-                st.success(f"Demand {'updated' if is_edit else 'added'} successfully!")
-                st.session_state.show_demand_form = False
-                st.session_state.editing_demand = None
-                st.rerun()
-            else:
-                st.error(f"Failed to {'update' if is_edit else 'add'} demand.")
-        
-        if cancel_button:
-            st.session_state.show_demand_form = False
-            st.session_state.editing_demand = None
-            st.rerun() 
+    
+    # Handle form submission
+    if submit_button and not cancel_button:  # Only process if submit was clicked and cancel wasn't
+        if not form_data["project_name"] or not form_data["role_required"]:
+            st.error("Project and Role Required are mandatory fields")
+        elif form_data["end_date"] < form_data["start_date"]:
+            st.error("End date must be after start date")
+        else:
+            try:
+                # Create or update demand
+                if is_edit:
+                    demand.project_id = project_id
+                    demand.role_required = form_data["role_required"]
+                    demand.fte_required = form_data["fte_required"]
+                    demand.start_date = form_data["start_date"]
+                    demand.end_date = form_data["end_date"]
+                    demand.status = form_data["status"]
+                    demand.priority = form_data["priority"]
+                    demand_id = db.save_demand(demand)
+                else:
+                    new_demand = Demand(
+                        project_id=project_id,
+                        role_required=form_data["role_required"],
+                        fte_required=form_data["fte_required"],
+                        start_date=form_data["start_date"],
+                        end_date=form_data["end_date"],
+                        status=form_data["status"],
+                        priority=form_data["priority"]
+                    )
+                    demand_id = db.save_demand(new_demand)
+                
+                if demand_id:
+                    st.success("Demand saved successfully!")
+                    # Clear session state
+                    st.session_state.show_demand_form = False
+                    st.session_state.editing_demand = None
+                    # Force a rerun to refresh the data
+                    st.rerun()
+                else:
+                    st.error("Failed to save demand")
+            except Exception as e:
+                st.error(f"Error saving demand: {str(e)}")
+    
+    # Handle cancel
+    if cancel_button:
+        # Clear session state
+        st.session_state.show_demand_form = False
+        st.session_state.editing_demand = None
+        # Force a rerun to refresh the data
+        st.rerun() 

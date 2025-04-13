@@ -42,51 +42,17 @@ def get_db_connection(read_only: bool = False):
     retry_delay = 0.2  # seconds
     conn = None
     
-    # Track active connections to ensure proper cleanup
-    if not hasattr(get_db_connection, "active_connections"):
-        get_db_connection.active_connections = []
-    
-    # Try to remove any dead connections
-    for existing_conn in list(get_db_connection.active_connections):
-        try:
-            # Check if connection is still open by attempting a simple query
-            existing_conn.execute("SELECT 1")
-        except:
-            # Connection is dead, remove it from our list
-            try:
-                existing_conn.close()
-            except:
-                pass
-            if existing_conn in get_db_connection.active_connections:
-                get_db_connection.active_connections.remove(existing_conn)
-    
-    # Try to get a new connection
     for attempt in range(max_retries):
         try:
             conn = duckdb.connect(db_path, read_only=read_only)
-            get_db_connection.active_connections.append(conn)
             break
         except duckdb.IOException as e:
             if "Conflicting lock" in str(e) and attempt < max_retries - 1:
-                if conn:
-                    try:
-                        conn.close()
-                        if conn in get_db_connection.active_connections:
-                            get_db_connection.active_connections.remove(conn)
-                    except:
-                        pass
                 time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
                 continue
             raise
         except duckdb.ConnectionException as e:
             if "different configuration than existing connections" in str(e) and attempt < max_retries - 1:
-                # Clear all connections and try again
-                for existing_conn in list(get_db_connection.active_connections):
-                    try:
-                        existing_conn.close()
-                    except:
-                        pass
-                get_db_connection.active_connections = []
                 time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
                 continue
             raise
@@ -100,8 +66,6 @@ def get_db_connection(read_only: bool = False):
         if conn:
             try:
                 conn.close()
-                if conn in get_db_connection.active_connections:
-                    get_db_connection.active_connections.remove(conn)
             except:
                 pass
 
@@ -201,7 +165,7 @@ def get_person(conn, person_id: int) -> Optional[Person]:
     
     return None
 
-@with_connection()
+@with_connection(read_only=False)
 def save_person(conn, person: Person) -> int:
     """
     Save a person to the database.
@@ -232,20 +196,19 @@ def save_person(conn, person: Person) -> int:
             WHERE id = ?
         """
         conn.execute(query, [person.name, person.role, person.team_id, person.id])
-        person_id = person.id
+        return person.id
     else:
         # Insert new person
+        person_id = str(uuid4())
         query = """
-            INSERT INTO people (name, role, team_id)
-            VALUES (?, ?, ?)
-            RETURNING id
+            INSERT INTO people (id, name, role, team_id)
+            VALUES (?, ?, ?, ?)
         """
-        result = conn.execute(query, [person.name, person.role, person.team_id]).fetchone()
-        person_id = result[0]
-    
-    return person_id
+        conn.execute(query, [person_id, person.name, person.role, person.team_id])
+        return person_id
 
-def delete_person(person_id: int) -> bool:
+@with_connection(read_only=False)
+def delete_person(conn, person_id: int) -> bool:
     """
     Delete a person from the database.
     
@@ -255,8 +218,6 @@ def delete_person(person_id: int) -> bool:
     Returns:
         True if the person was deleted, False otherwise
     """
-    conn = get_db_connection()
-    
     # Check if person has allocations
     has_allocations = conn.execute(
         "SELECT COUNT(*) FROM allocations WHERE person_id = ?", 
@@ -264,12 +225,10 @@ def delete_person(person_id: int) -> bool:
     ).fetchone()[0]
     
     if has_allocations > 0:
-        conn.close()
         return False
     
     # Delete person
     conn.execute("DELETE FROM people WHERE id = ?", [person_id])
-    conn.close()
     return True
 
 @with_connection(read_only=True)
@@ -350,53 +309,62 @@ def get_team(conn, team_id: int) -> Optional[Team]:
     
     return None
 
-@with_connection
-def save_team(conn, team):
-    """Save a team to the database."""
-    if team.id:
-        # Check if team exists
-        existing_team = conn.execute("""
-            SELECT id FROM teams WHERE id = ?
-        """, [team.id]).fetchone()
+@with_connection(read_only=False)
+def save_team(conn, team: Team) -> int:
+    """
+    Save a team to the database.
+    
+    Args:
+        team: The Team object to save
         
-        if existing_team:
-            # First check if there are any people in this team
-            people_in_team = conn.execute("""
-                SELECT COUNT(*) FROM people WHERE team_id = ?
-            """, [team.id]).fetchone()[0]
+    Returns:
+        The ID of the saved team
+    """
+    if team.id:
+        # Check if team has members
+        has_members = conn.execute("""
+            SELECT COUNT(*) FROM people WHERE team_id = ?
+        """, [team.id]).fetchone()[0]
+        
+        if has_members > 0:
+            # If team has members, create a new team
+            new_team_id = str(uuid4())
+            query = """
+                INSERT INTO teams (id, name, description, parent_team_id)
+                VALUES (?, ?, ?, ?)
+            """
+            conn.execute(query, [
+                new_team_id,
+                team.name,
+                team.description,
+                team.parent_team_id
+            ])
             
-            if people_in_team > 0:
-                # If there are people in the team, create a new team
-                new_team_id = str(uuid4())
-                conn.execute("""
-                    INSERT INTO teams (id, name, description, parent_team_id)
-                    VALUES (?, ?, ?, ?)
-                """, [new_team_id, team.name, team.description, team.parent_team_id])
-                
-                # Move all people to the new team
-                conn.execute("""
-                    UPDATE people
-                    SET team_id = ?
-                    WHERE team_id = ?
-                """, [new_team_id, team.id])
-                
-                # Delete the old team
-                conn.execute("""
-                    DELETE FROM teams WHERE id = ?
-                """, [team.id])
-                
-                return new_team_id
-            else:
-                # If no people in team, just update it
-                query = """
-                    UPDATE teams
-                    SET name = ?,
-                        description = ?,
-                        parent_team_id = ?
-                    WHERE id = ?
-                """
-                conn.execute(query, [team.name, team.description, team.parent_team_id, team.id])
-                return team.id
+            # Move all members to the new team
+            conn.execute("""
+                UPDATE people
+                SET team_id = ?
+                WHERE team_id = ?
+            """, [new_team_id, team.id])
+            
+            # Delete the old team
+            conn.execute("DELETE FROM teams WHERE id = ?", [team.id])
+            
+            return new_team_id
+        else:
+            # Update existing team
+            query = """
+                UPDATE teams
+                SET name = ?, description = ?, parent_team_id = ?
+                WHERE id = ?
+            """
+            conn.execute(query, [
+                team.name,
+                team.description,
+                team.parent_team_id,
+                team.id
+            ])
+            return team.id
     else:
         # Insert new team
         team_id = str(uuid4())
@@ -404,10 +372,15 @@ def save_team(conn, team):
             INSERT INTO teams (id, name, description, parent_team_id)
             VALUES (?, ?, ?, ?)
         """
-        conn.execute(query, [team_id, team.name, team.description, team.parent_team_id])
+        conn.execute(query, [
+            team_id,
+            team.name,
+            team.description,
+            team.parent_team_id
+        ])
         return team_id
 
-@with_connection()
+@with_connection(read_only=False)
 def delete_team(conn, team_id: int) -> bool:
     """Delete a team from the database."""
     # Check if team has members
@@ -553,7 +526,7 @@ def get_project(conn, project_id: int) -> Optional[Project]:
     
     return None
 
-@with_connection()
+@with_connection(read_only=False)
 def save_project(conn, project: Project) -> int:
     """
     Save a project to the database.
@@ -606,7 +579,7 @@ def save_project(conn, project: Project) -> int:
     
     return project_id
 
-@with_connection()
+@with_connection(read_only=False)
 def delete_project(conn, project_id: int) -> bool:
     """
     Delete a project from the database.
@@ -707,7 +680,8 @@ def get_demands(conn, project_id: Optional[int] = None, status: Optional[str] = 
     
     return demands
 
-def get_demand(demand_id: int, conn=None) -> Optional[Demand]:
+@with_connection(read_only=True)
+def get_demand(conn, demand_id: int) -> Optional[Demand]:
     """
     Get a demand by ID.
     
@@ -763,7 +737,7 @@ def get_demand(demand_id: int, conn=None) -> Optional[Demand]:
             except:
                 pass
 
-@with_connection()
+@with_connection(read_only=False)
 def save_demand(conn, demand: Demand) -> int:
     """
     Save a demand to the database.
@@ -775,61 +749,99 @@ def save_demand(conn, demand: Demand) -> int:
         The ID of the saved demand
     """
     if demand.id:
-        # Update existing demand
-        query = """
-            UPDATE demands
-            SET project_id = ?, role_required = ?, 
-                fte_required = ?, start_date = ?, end_date = ?, 
-                priority = ?, status = ?
-            WHERE id = ?
-        """
-        conn.execute(query, [
-            demand.project_id, 
-            demand.role_required, 
-            demand.fte_required,
-            demand.start_date,
-            demand.end_date,
-            demand.priority,
-            demand.status,
-            demand.id
-        ])
-        demand_id = demand.id
+        # Check if demand has allocations
+        has_allocations = conn.execute("""
+            SELECT COUNT(*) FROM allocations WHERE demand_id = ?
+        """, [demand.id]).fetchone()[0]
+        
+        if has_allocations > 0:
+            # If demand has allocations, create a new demand
+            new_demand_id = str(uuid4())
+            query = """
+                INSERT INTO demands (
+                    id, project_id, role_required, fte_required,
+                    start_date, end_date, priority, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            conn.execute(query, [
+                new_demand_id,
+                demand.project_id,
+                demand.role_required,
+                demand.fte_required,
+                demand.start_date,
+                demand.end_date,
+                demand.priority,
+                demand.status
+            ])
+            
+            # Move all allocations to the new demand
+            conn.execute("""
+                UPDATE allocations
+                SET demand_id = ?
+                WHERE demand_id = ?
+            """, [new_demand_id, demand.id])
+            
+            # Delete the old demand
+            conn.execute("DELETE FROM demands WHERE id = ?", [demand.id])
+            
+            return new_demand_id
+        else:
+            # Update existing demand
+            query = """
+                UPDATE demands
+                SET project_id = ?, role_required = ?, 
+                    fte_required = ?, start_date = ?, end_date = ?, 
+                    priority = ?, status = ?
+                WHERE id = ?
+            """
+            conn.execute(query, [
+                demand.project_id, 
+                demand.role_required, 
+                demand.fte_required,
+                demand.start_date,
+                demand.end_date,
+                demand.priority,
+                demand.status,
+                demand.id
+            ])
+            return demand.id
     else:
         # Insert new demand
+        demand_id = str(uuid4())
         query = """
             INSERT INTO demands (
-                project_id, role_required, fte_required, 
+                id, project_id, role_required, fte_required,
                 start_date, end_date, priority, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            RETURNING id
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
-        result = conn.execute(query, [
-            demand.project_id, 
-            demand.role_required, 
+        conn.execute(query, [
+            demand_id,
+            demand.project_id,
+            demand.role_required,
             demand.fte_required,
             demand.start_date,
             demand.end_date,
             demand.priority,
             demand.status
-        ]).fetchone()
-        demand_id = result[0]
-    
-    # Update monthly allocations
-    update_monthly_allocations()
-    
-    return demand_id
+        ])
+        return demand_id
 
-@with_connection()
-def delete_demand(conn, demand_id: int) -> bool:
+@with_connection(read_only=False)
+def delete_demand(conn, demand_id: int, delete_allocations: bool = False) -> bool:
     """
     Delete a demand from the database.
     
     Args:
         demand_id: The ID of the demand to delete
+        delete_allocations: If True, will also delete any associated allocations
         
     Returns:
-        True if the demand was deleted, False otherwise
+        True if the demand was deleted
+        
+    Raises:
+        ValueError: If the demand has allocations and delete_allocations is False
     """
     # Check if demand has allocations
     has_allocations = conn.execute(
@@ -837,8 +849,12 @@ def delete_demand(conn, demand_id: int) -> bool:
         [demand_id]
     ).fetchone()[0]
     
-    if has_allocations > 0:
-        return False
+    if has_allocations > 0 and not delete_allocations:
+        raise ValueError("Cannot delete demand because it has allocations. Please remove all allocations first.")
+    
+    # If delete_allocations is True, delete the allocations first
+    if delete_allocations:
+        conn.execute("DELETE FROM allocations WHERE demand_id = ?", [demand_id])
     
     # Delete demand
     conn.execute("DELETE FROM demands WHERE id = ?", [demand_id])
@@ -862,7 +878,8 @@ def get_open_demands_count(conn) -> int:
     return count
 
 # Allocation queries
-def get_allocations(person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None, conn=None) -> List[Allocation]:
+@with_connection(read_only=True)
+def get_allocations(conn, person_id: Optional[int] = None, project_id: Optional[int] = None, demand_id: Optional[int] = None) -> List[Allocation]:
     """
     Get all allocations, optionally filtered by person_id, project_id, or demand_id.
     
@@ -997,55 +1014,8 @@ def get_allocation(conn, allocation_id: int) -> Optional[Allocation]:
     
     return None
 
-def update_demand_status(demand_id: int, conn=None) -> None:
-    """
-    Update the status of a demand based on its allocations.
-    
-    Args:
-        demand_id: The ID of the demand to update
-        conn: Optional database connection. If not provided, a new connection will be created.
-    """
-    should_close_conn = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close_conn = True
-    
-    try:
-        # Get the demand
-        demand = get_demand(demand_id, conn)
-        if not demand:
-            return
-        
-        # Get all allocations for this demand
-        allocations = get_allocations(demand_id=demand_id, conn=conn)
-        
-        # Calculate total allocated FTE
-        total_allocated = 0
-        for allocation in allocations:
-            total_allocated += allocation.fte_allocated
-        
-        # Update demand status based on allocated FTE
-        new_status = demand.status
-        if total_allocated == 0:
-            new_status = 'open'
-        elif total_allocated < demand.fte_required:
-            new_status = 'partially_filled'
-        else:
-            new_status = 'filled'
-        
-        # Update the demand
-        conn.execute(
-            "UPDATE demands SET status = ? WHERE id = ?",
-            [new_status, demand_id]
-        )
-    finally:
-        if should_close_conn and conn:
-            try:
-                conn.close()
-            except:
-                pass
-
-def save_allocation(allocation: Allocation) -> int:
+@with_connection(read_only=False)
+def save_allocation(conn, allocation: Allocation) -> int:
     """
     Save an allocation to the database.
     
@@ -1055,80 +1025,79 @@ def save_allocation(allocation: Allocation) -> int:
     Returns:
         The ID of the saved allocation
     """
-    with get_db_connection() as conn:
-        if allocation.id:
-            # Update existing allocation
-            query = """
-                UPDATE allocations
-                SET person_id = ?, project_id = ?, demand_id = ?, 
-                    fte_allocated = ?, start_date = ?, end_date = ?, notes = ?
+    if allocation.id:
+        # Update existing allocation
+        query = """
+            UPDATE allocations
+            SET person_id = ?, project_id = ?, demand_id = ?, 
+                fte_allocated = ?, start_date = ?, end_date = ?, notes = ?
+            WHERE id = ?
+        """
+        conn.execute(query, [
+            allocation.person_id, 
+            allocation.project_id, 
+            allocation.demand_id, 
+            allocation.fte_allocated,
+            allocation.start_date,
+            allocation.end_date,
+            allocation.notes,
+            allocation.id
+        ])
+        allocation_id = allocation.id
+    else:
+        # Insert new allocation
+        query = """
+            INSERT INTO allocations (
+                person_id, project_id, demand_id, fte_allocated, 
+                start_date, end_date, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+        """
+        result = conn.execute(query, [
+            allocation.person_id, 
+            allocation.project_id, 
+            allocation.demand_id, 
+            allocation.fte_allocated,
+            allocation.start_date,
+            allocation.end_date,
+            allocation.notes
+        ]).fetchone()
+        allocation_id = result[0]
+    
+    # If allocation is linked to a demand, update the demand status
+    if allocation.demand_id:
+        # Get demand using the same connection
+        demand = get_demand(allocation.demand_id, conn)
+        if demand:
+            # Calculate total allocated FTE for this demand
+            total_allocated = conn.execute("""
+                SELECT COALESCE(SUM(fte_allocated), 0)
+                FROM allocations
+                WHERE demand_id = ?
+            """, [allocation.demand_id]).fetchone()[0]
+            
+            # Update demand status based on allocation
+            if total_allocated >= demand.fte_required:
+                new_status = "filled"
+            elif total_allocated > 0:
+                new_status = "partially_filled"
+            else:
+                new_status = "open"
+            
+            # Update demand status
+            conn.execute("""
+                UPDATE demands
+                SET status = ?
                 WHERE id = ?
-            """
-            conn.execute(query, [
-                allocation.person_id, 
-                allocation.project_id, 
-                allocation.demand_id, 
-                allocation.fte_allocated,
-                allocation.start_date,
-                allocation.end_date,
-                allocation.notes,
-                allocation.id
-            ])
-            allocation_id = allocation.id
-        else:
-            # Insert new allocation
-            query = """
-                INSERT INTO allocations (
-                    person_id, project_id, demand_id, fte_allocated, 
-                    start_date, end_date, notes
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                RETURNING id
-            """
-            result = conn.execute(query, [
-                allocation.person_id, 
-                allocation.project_id, 
-                allocation.demand_id, 
-                allocation.fte_allocated,
-                allocation.start_date,
-                allocation.end_date,
-                allocation.notes
-            ]).fetchone()
-            allocation_id = result[0]
-        
-        # If allocation is linked to a demand, update the demand status
-        if allocation.demand_id:
-            # Get demand using the same connection
-            demand = get_demand(allocation.demand_id, conn)
-            if demand:
-                # Calculate total allocated FTE for this demand
-                total_allocated = conn.execute("""
-                    SELECT COALESCE(SUM(fte_allocated), 0)
-                    FROM allocations
-                    WHERE demand_id = ?
-                """, [allocation.demand_id]).fetchone()[0]
-                
-                # Update demand status based on allocation
-                if total_allocated >= demand.fte_required:
-                    new_status = "filled"
-                elif total_allocated > 0:
-                    new_status = "partially_filled"
-                else:
-                    new_status = "open"
-                
-                # Update demand status
-                conn.execute("""
-                    UPDATE demands
-                    SET status = ?
-                    WHERE id = ?
-                """, [new_status, allocation.demand_id])
-        
-        # Update monthly allocations within the same connection
-        compute_monthly_allocations(conn)
-        
-        return allocation_id
+            """, [new_status, allocation.demand_id])
+    
+    # Update monthly allocations within the same connection
+    compute_monthly_allocations(conn)
+    
+    return allocation_id
 
-@with_connection()
+@with_connection(read_only=False)
 def delete_allocation(conn, allocation_id: int) -> bool:
     """
     Delete an allocation from the database.
@@ -1155,10 +1124,34 @@ def delete_allocation(conn, allocation_id: int) -> bool:
     
     # If allocation was linked to a demand, update the demand status
     if demand_id:
-        update_demand_status(demand_id)
+        # Get the demand
+        demand = get_demand(demand_id, conn)
+        if demand:
+            # Get all allocations for this demand
+            allocations = get_allocations(demand_id=demand_id, conn=conn)
+            
+            # Calculate total allocated FTE
+            total_allocated = 0
+            for allocation in allocations:
+                total_allocated += allocation.fte_allocated
+            
+            # Update demand status based on allocated FTE
+            new_status = demand.status
+            if total_allocated == 0:
+                new_status = 'open'
+            elif total_allocated < demand.fte_required:
+                new_status = 'partially_filled'
+            else:
+                new_status = 'filled'
+            
+            # Update the demand
+            conn.execute(
+                "UPDATE demands SET status = ? WHERE id = ?",
+                [new_status, demand_id]
+            )
     
-    # Update monthly allocations
-    update_monthly_allocations()
+    # Update monthly allocations within the same connection
+    compute_monthly_allocations(conn)
     
     return True
 
@@ -1233,7 +1226,7 @@ def get_monthly_demand_allocation(conn, start_date: date, end_date: date) -> Lis
     
     return monthly_data
 
-@with_connection()
+@with_connection(read_only=False)
 def update_monthly_allocations(conn) -> None:
     """Update the monthly_demand_allocation table with current data."""
     # This function will be implemented in the init_db.py file
