@@ -17,6 +17,8 @@ class Team:
     name: str
     description: str = ""
     id: Optional[str] = None
+    parent_team_id: Optional[str] = None
+    parent_team_name: Optional[str] = None
 
 @dataclass
 class Project:

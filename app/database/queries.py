@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict, Any, Tuple
 from functools import wraps
 import contextlib
+from uuid import uuid4
 
 from app.models.data_models import (
     Person,
@@ -280,32 +281,60 @@ def get_total_people_count(conn) -> int:
 # Teams queries
 @with_connection(read_only=True)
 def get_teams(conn) -> List[Team]:
-    """Get all teams."""
+    """
+    Get all teams.
+    
+    Returns:
+        List of Team objects
+    """
     query = """
-        SELECT id, name, description
-        FROM teams
-        ORDER BY name
+        SELECT 
+            t.id, 
+            t.name, 
+            t.description,
+            t.parent_team_id,
+            pt.name as parent_team_name
+        FROM teams t
+        LEFT JOIN teams pt ON t.parent_team_id = pt.id
+        ORDER BY t.name
     """
     
     result = conn.execute(query).fetchall()
     
     teams = []
     for row in result:
-        teams.append(Team(
+        team = Team(
             id=row[0],
             name=row[1],
-            description=row[2]
-        ))
+            description=row[2],
+            parent_team_id=row[3],
+            parent_team_name=row[4]
+        )
+        teams.append(team)
     
     return teams
 
 @with_connection(read_only=True)
 def get_team(conn, team_id: int) -> Optional[Team]:
-    """Get a team by ID."""
+    """
+    Get a team by ID.
+    
+    Args:
+        team_id: The ID of the team to retrieve
+        
+    Returns:
+        Team object if found, None otherwise
+    """
     query = """
-        SELECT id, name, description
-        FROM teams
-        WHERE id = ?
+        SELECT 
+            t.id, 
+            t.name, 
+            t.description,
+            t.parent_team_id,
+            pt.name as parent_team_name
+        FROM teams t
+        LEFT JOIN teams pt ON t.parent_team_id = pt.id
+        WHERE t.id = ?
     """
     
     result = conn.execute(query, [team_id]).fetchone()
@@ -314,34 +343,69 @@ def get_team(conn, team_id: int) -> Optional[Team]:
         return Team(
             id=result[0],
             name=result[1],
-            description=result[2]
+            description=result[2],
+            parent_team_id=result[3],
+            parent_team_name=result[4]
         )
     
     return None
 
-@with_connection()
-def save_team(conn, team: Team) -> int:
+@with_connection
+def save_team(conn, team):
     """Save a team to the database."""
     if team.id:
-        # Update existing team
-        query = """
-            UPDATE teams
-            SET name = ?, description = ?
-            WHERE id = ?
-        """
-        conn.execute(query, [team.name, team.description, team.id])
-        team_id = team.id
+        # Check if team exists
+        existing_team = conn.execute("""
+            SELECT id FROM teams WHERE id = ?
+        """, [team.id]).fetchone()
+        
+        if existing_team:
+            # First check if there are any people in this team
+            people_in_team = conn.execute("""
+                SELECT COUNT(*) FROM people WHERE team_id = ?
+            """, [team.id]).fetchone()[0]
+            
+            if people_in_team > 0:
+                # If there are people in the team, create a new team
+                new_team_id = str(uuid4())
+                conn.execute("""
+                    INSERT INTO teams (id, name, description, parent_team_id)
+                    VALUES (?, ?, ?, ?)
+                """, [new_team_id, team.name, team.description, team.parent_team_id])
+                
+                # Move all people to the new team
+                conn.execute("""
+                    UPDATE people
+                    SET team_id = ?
+                    WHERE team_id = ?
+                """, [new_team_id, team.id])
+                
+                # Delete the old team
+                conn.execute("""
+                    DELETE FROM teams WHERE id = ?
+                """, [team.id])
+                
+                return new_team_id
+            else:
+                # If no people in team, just update it
+                query = """
+                    UPDATE teams
+                    SET name = ?,
+                        description = ?,
+                        parent_team_id = ?
+                    WHERE id = ?
+                """
+                conn.execute(query, [team.name, team.description, team.parent_team_id, team.id])
+                return team.id
     else:
         # Insert new team
+        team_id = str(uuid4())
         query = """
-            INSERT INTO teams (name, description)
-            VALUES (?, ?)
-            RETURNING id
+            INSERT INTO teams (id, name, description, parent_team_id)
+            VALUES (?, ?, ?, ?)
         """
-        result = conn.execute(query, [team.name, team.description]).fetchone()
-        team_id = result[0]
-    
-    return team_id
+        conn.execute(query, [team_id, team.name, team.description, team.parent_team_id])
+        return team_id
 
 @with_connection()
 def delete_team(conn, team_id: int) -> bool:

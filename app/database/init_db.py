@@ -4,6 +4,45 @@ from datetime import date, datetime, timedelta
 from calendar import monthrange
 from uuid import uuid4
 
+def migrate_database():
+    """Migrate the database schema to add new columns."""
+    db_path = "resource_flow.duckdb"
+    
+    if not os.path.exists(db_path):
+        print(f"Database does not exist at {db_path}")
+        return
+    
+    # Create a new connection
+    conn = duckdb.connect(db_path)
+    
+    try:
+        # Check if parent_team_id column exists
+        result = conn.execute("""
+            SELECT COUNT(*) 
+            FROM pragma_table_info('teams') 
+            WHERE name = 'parent_team_id'
+        """).fetchone()
+        
+        if result[0] == 0:
+            print("Adding parent_team_id column to teams table...")
+            # Add parent_team_id column
+            conn.execute("""
+                ALTER TABLE teams 
+                ADD COLUMN parent_team_id VARCHAR
+            """)
+            
+            # Add foreign key constraint
+            conn.execute("""
+                ALTER TABLE teams 
+                ADD FOREIGN KEY (parent_team_id) REFERENCES teams(id)
+            """)
+            print("Migration completed successfully")
+        else:
+            print("Database is already up to date")
+    
+    finally:
+        conn.close()
+
 def initialize_database():
     """Initialize the DuckDB database with tables and sample data."""
     db_path = "resource_flow.duckdb"
@@ -11,6 +50,8 @@ def initialize_database():
     # Check if database already exists
     if os.path.exists(db_path):
         print(f"Database already exists at {db_path}")
+        # Run migrations if needed
+        migrate_database()
         return
     
     # Create a new connection
@@ -38,7 +79,9 @@ def create_tables(conn):
     CREATE TABLE teams (
         id VARCHAR PRIMARY KEY,
         name VARCHAR NOT NULL,
-        description VARCHAR
+        description VARCHAR,
+        parent_team_id VARCHAR,
+        FOREIGN KEY (parent_team_id) REFERENCES teams(id)
     )
     """)
     
@@ -132,17 +175,37 @@ def add_sample_data(conn):
         """, [team_id, team_name, team_desc])
         team_ids.append(team_id)
     
+    # Add sub-teams with parent relationships
+    sub_teams = [
+        ("Frontend", "Frontend development team", team_ids[0]),  # Under Engineering
+        ("Backend", "Backend development team", team_ids[0]),    # Under Engineering
+        ("UX", "User experience team", team_ids[1]),            # Under Design
+        ("UI", "User interface team", team_ids[1]),             # Under Design
+        ("Product Strategy", "Product strategy team", team_ids[2]),  # Under Product
+        ("Product Operations", "Product operations team", team_ids[2]),  # Under Product
+        ("Machine Learning", "ML team", team_ids[3]),           # Under Data Science
+        ("Data Engineering", "Data engineering team", team_ids[3])  # Under Data Science
+    ]
+    
+    for team_name, team_desc, parent_id in sub_teams:
+        team_id = str(uuid4())
+        conn.execute("""
+        INSERT INTO teams (id, name, description, parent_team_id)
+        VALUES (?, ?, ?, ?)
+        """, [team_id, team_name, team_desc, parent_id])
+        team_ids.append(team_id)
+    
     # Add People
     people_ids = []
     people = [
-        ("John Smith", "Software Engineer", team_ids[0]),
-        ("Jane Doe", "Senior Developer", team_ids[0]),
-        ("Bob Johnson", "UX Designer", team_ids[1]),
-        ("Alice Brown", "Product Manager", team_ids[2]),
-        ("Charlie Davis", "Data Scientist", team_ids[3]),
-        ("Eva Wilson", "Backend Developer", team_ids[0]),
-        ("Frank Miller", "Frontend Developer", team_ids[0]),
-        ("Grace Lee", "UI Designer", team_ids[1])
+        ("John Smith", "Software Engineer", team_ids[4]),  # Frontend team
+        ("Jane Doe", "Senior Developer", team_ids[5]),     # Backend team
+        ("Bob Johnson", "UX Designer", team_ids[6]),       # UX team
+        ("Alice Brown", "Product Manager", team_ids[9]),   # Product Strategy team
+        ("Charlie Davis", "Data Scientist", team_ids[10]), # ML team
+        ("Eva Wilson", "Backend Developer", team_ids[5]),  # Backend team
+        ("Frank Miller", "Frontend Developer", team_ids[4]), # Frontend team
+        ("Grace Lee", "UI Designer", team_ids[7])          # UI team
     ]
     
     for person_name, person_role, team_id in people:

@@ -23,6 +23,7 @@ def render_team_list():
     if st.button("Add New Team", key="add_team_button"):
         st.session_state.show_team_form = True
         st.session_state.editing_team = None
+        st.rerun()
     
     # Get all teams for display
     teams = db.get_teams()
@@ -33,10 +34,12 @@ def render_team_list():
         teams_data = []
         for team in teams:
             members = db.get_people(team_id=team.id)
+            parent_team = next((t for t in teams if t.id == team.parent_team_id), None)
             teams_data.append({
                 "ID": team.id,
                 "Name": team.name,
                 "Description": team.description,
+                "Parent Team": parent_team.name if parent_team else "None",
                 "Members": len(members)
             })
         
@@ -120,40 +123,83 @@ def render_team_form(team=None):
     
     st.subheader(form_title)
     
+    # Initialize form data
+    form_data = {
+        "name": team.name if is_edit else "",
+        "description": team.description if is_edit else "",
+        "parent_team_id": team.parent_team_id if is_edit else None
+    }
+    
+    # Get all teams for parent team selection
+    teams = db.get_teams()
+    parent_team_options = [("None", None)] + [(t.name, t.id) for t in teams if not is_edit or t.id != team.id]
+    
+    # Find the current parent team index
+    parent_team_index = 0
+    if is_edit and team.parent_team_id:
+        for i, (_, team_id) in enumerate(parent_team_options):
+            if team_id == team.parent_team_id:
+                parent_team_index = i
+                break
+    
+    # Create the form
     with st.form(key="team_form"):
         # Form inputs
-        name = st.text_input("Team Name", value=team.name if is_edit else "")
-        description = st.text_area("Description", value=team.description if is_edit else "")
+        form_data["name"] = st.text_input("Team Name", value=form_data["name"])
+        form_data["description"] = st.text_area("Description", value=form_data["description"])
+        
+        selected_parent_team = st.selectbox(
+            "Parent Team (Optional)",
+            options=[name for name, _ in parent_team_options],
+            index=parent_team_index
+        )
+        form_data["parent_team_id"] = next((id for name, id in parent_team_options if name == selected_parent_team), None)
         
         col1, col2 = st.columns(2)
         with col1:
             submit_button = st.form_submit_button("Save", use_container_width=True)
         with col2:
             cancel_button = st.form_submit_button("Cancel", use_container_width=True)
-        
-        if submit_button:
-            if not name:
-                st.error("Team name is required")
-            else:
+    
+    # Handle form submission
+    if submit_button:
+        if not form_data["name"]:
+            st.error("Team name is required")
+        else:
+            try:
                 # Create or update team
                 if is_edit:
-                    team.name = name
-                    team.description = description
+                    team.name = form_data["name"]
+                    team.description = form_data["description"]
+                    team.parent_team_id = form_data["parent_team_id"]
                     team_id = db.save_team(team)
                 else:
-                    new_team = Team(name=name, description=description)
+                    new_team = Team(
+                        name=form_data["name"],
+                        description=form_data["description"],
+                        parent_team_id=form_data["parent_team_id"]
+                    )
                     team_id = db.save_team(new_team)
                 
                 if team_id:
                     st.success("Team saved successfully!")
+                    # Clear session state
                     st.session_state.show_team_form = False
+                    st.session_state.editing_team = None
+                    # Force a rerun to refresh the data
                     st.rerun()
                 else:
                     st.error("Failed to save team")
-        
-        if cancel_button:
-            st.session_state.show_team_form = False
-            st.rerun()
+            except Exception as e:
+                st.error(f"Error saving team: {str(e)}")
+    
+    # Handle cancel
+    if cancel_button:
+        # Clear session state
+        st.session_state.show_team_form = False
+        st.session_state.editing_team = None
+        # Force a rerun to refresh the data
+        st.rerun()
 
 def render_team_members(team):
     """Render the list of team members with management options."""
