@@ -17,20 +17,22 @@ from app.components.dashboard import render_dashboard
 from app.database.init_db import initialize_database
 from app.database.migrate_db import migrate_database
 
-# Register timedelta encoder for Plotly
-from _plotly_utils.utils import PlotlyJSONEncoder
+# Fix JSON serialization for timedelta objects
+# We'll use a custom JSONEncoder that inherits from the built-in one
+class TimedeltaJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, timedelta):
+            return str(obj)
+        return super().default(obj)
 
-# Monkey patch the default method to handle timedelta
-original_default = PlotlyJSONEncoder.default
+# Patch the json.dumps function to use our encoder
+original_dumps = json.dumps
+def patched_dumps(*args, **kwargs):
+    kwargs['cls'] = kwargs.get('cls', TimedeltaJSONEncoder)
+    return original_dumps(*args, **kwargs)
 
-def patched_default(self, obj):
-    if isinstance(obj, timedelta):
-        return str(obj)
-    if hasattr(original_default, '__call__'):  # Ensure it's callable
-        return original_default(self, obj)
-    return json.JSONEncoder.default(self, obj)
-
-PlotlyJSONEncoder.default = patched_default
+# Apply the patch
+json.dumps = patched_dumps
 
 def check_database_initialization():
     """Check if the database is initialized and initialize if it doesn't exist."""
