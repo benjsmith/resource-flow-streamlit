@@ -7,52 +7,32 @@ from app.database.queries import get_db_connection
 
 def migrate_database():
     """Run database migrations."""
-    with get_db_connection() as conn:
-        try:
-            # Check if migrations table exists
+    conn = duckdb.connect("resource_flow.duckdb")
+    
+    try:
+        # Check if capacity_fte column exists
+        columns = conn.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'monthly_demand_allocation'
+        """).fetchall()
+        
+        column_names = [col[0] for col in columns]
+        
+        if 'capacity_fte' not in column_names:
+            # Add capacity_fte column
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS migrations (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+                ALTER TABLE monthly_demand_allocation
+                ADD COLUMN capacity_fte FLOAT DEFAULT 0
             """)
+            print("Added capacity_fte column to monthly_demand_allocation table")
             
-            # Get list of applied migrations
-            applied_migrations = set(
-                row[0] for row in conn.execute("SELECT name FROM migrations").fetchall()
-            )
-            
-            # Define migrations
-            migrations = [
-                {
-                    "name": "add_capacity_fte_to_monthly_demand_allocation",
-                    "sql": """
-                        ALTER TABLE monthly_demand_allocation 
-                        ADD COLUMN IF NOT EXISTS capacity_fte FLOAT DEFAULT 8.0;
-                    """
-                }
-            ]
-            
-            # Run pending migrations
-            for migration in migrations:
-                if migration["name"] not in applied_migrations:
-                    try:
-                        print(f"Applying migration: {migration['name']}...")
-                        conn.execute(migration["sql"])
-                        # Get next ID
-                        next_id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM migrations").fetchone()[0]
-                        conn.execute(
-                            "INSERT INTO migrations (id, name) VALUES (?, ?)",
-                            [next_id, migration["name"]]
-                        )
-                        print(f"Successfully applied migration: {migration['name']}")
-                    except Exception as e:
-                        print(f"Error applying migration {migration['name']}: {e}")
-                        raise
-        except Exception as e:
-            print(f"Migration error: {e}")
-            raise
+            # Recompute monthly allocations to populate the new column
+            compute_monthly_allocations(conn)
+            print("Recomputed monthly allocations with capacity data")
+    
+    finally:
+        conn.close()
 
 def check_if_using_uuid(conn):
     """Check if the database is already using UUIDs for primary keys."""

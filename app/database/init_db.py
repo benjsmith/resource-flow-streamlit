@@ -157,6 +157,7 @@ def create_tables(conn):
         fte_allocated FLOAT DEFAULT 0,
         fte_gap FLOAT DEFAULT 0,
         status VARCHAR,
+        capacity_fte FLOAT DEFAULT 0,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (demand_id) REFERENCES demands(id),
         FOREIGN KEY (person_id) REFERENCES people(id)
@@ -309,6 +310,13 @@ def compute_monthly_allocations(conn=None):
             FROM allocations
         """).fetchall()
         
+        # Get total capacity (sum of all people's FTE)
+        total_capacity = conn.execute("""
+            SELECT COALESCE(SUM(fte_capacity), 0)
+            FROM people
+            WHERE active = true
+        """).fetchone()[0]
+        
         # Process each month for each demand
         for demand in demands:
             demand_id = demand[0]
@@ -353,8 +361,9 @@ def compute_monthly_allocations(conn=None):
                 conn.execute("""
                     INSERT INTO monthly_demand_allocation (
                         id, year_month, project_id, demand_id, 
-                        fte_demand, fte_allocated, fte_gap, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        fte_demand, fte_allocated, fte_gap, status,
+                        capacity_fte
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, [
                     str(uuid4()),
                     date(current_date.year, current_date.month, 1),
@@ -363,7 +372,8 @@ def compute_monthly_allocations(conn=None):
                     fte_required,
                     month_allocated,
                     gap,
-                    status
+                    status,
+                    total_capacity
                 ])
                 
                 # Move to next month

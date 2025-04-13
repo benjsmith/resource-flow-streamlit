@@ -112,18 +112,60 @@ def main():
             ## Overview
             Resource Flow is a tool for planning and managing resources across projects.
             
-            ## Features
-            - **Dashboard**: Overview of resource allocation, demand, and status
-            - **Projects**: Manage projects and their timelines
-            - **People**: Manage team members and their skills
-            - **Teams**: Organize people into teams
-            - **Demands**: Track resource demands for projects
-            - **Allocations**: Assign people to projects to fulfill demands
+            ## Features and Usage
+            
+            ### Dashboard
+            - View an overview of resource allocation, demand, and status
+            - Analyze resource trends by selecting different time periods (Month/Quarter/Year)
+            - Monitor project health and team allocations
+            - Track upcoming key dates
+            
+            ### Projects
+            - **View Projects**: See a list of all projects with their status and timeline
+            - **Add Project**: Click "Add New Project" to create a new project
+            - **Edit Project**: Select a project and click "Edit Selected Project"
+            - **Delete Project**: Select a project and click "Delete Selected Project"
+            - Required fields: Name, Start Date, End Date, Status
+            
+            ### People
+            - **View People**: See a list of all team members with their roles and teams
+            - **Add Person**: Click "Add New Person" to create a new team member
+            - **Edit Person**: Select a person and click "Edit Selected Person"
+            - **Delete Person**: Select a person and click "Delete Selected Person"
+            - Required fields: Name, Role
+            - Note: Cannot delete people with active allocations
+            
+            ### Teams
+            - **View Teams**: See a list of all teams with their hierarchy and member count
+            - **Add Team**: Click "Add New Team" to create a new team
+            - **Edit Team**: Select a team and click "Edit Selected Team"
+            - **Delete Team**: Select a team and click "Delete Selected Team"
+            - Required fields: Name
+            - Optional: Description, Parent Team
+            
+            ### Demands
+            - **View Demands**: See a list of all resource demands with their status and priority
+            - **Add Demand**: Click "Add New Demand" to create a new resource demand
+            - **Edit Demand**: Select a demand and click "Edit Selected Demand"
+            - **Delete Demand**: Select a demand and click "Delete Selected Demand"
+            - Required fields: Project, Role Required, FTE Required, Start Date, End Date
+            - Note: Deleting a demand with allocations will prompt for confirmation
+            
+            ### Allocations
+            - **View Allocations**: See a list of all resource allocations
+            - **Add Allocation**: Click "Add New Allocation" to assign a person to a project
+            - **Edit Allocation**: Select an allocation and click "Edit Selected Allocation"
+            - **Delete Allocation**: Select an allocation and click "Delete Selected Allocation"
+            - Required fields: Person, Project, FTE Allocated, Start Date, End Date
+            - Use filters to view allocations by person or project
             
             ## Tips
             - Use the date range selector to filter data by time period
             - Click on items in tables to select them for actions
             - Add new items using the "Add" buttons or tabs
+            - Use the sidebar navigation to switch between different views
+            - Check the status indicators for project and demand health
+            - Monitor capacity utilization in the dashboard
             """)
             if st.button("Close Help"):
                 st.session_state.show_help = False

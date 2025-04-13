@@ -4,12 +4,30 @@ A lightweight, responsive, and informative resource planning application built w
 
 ## Features
 
-- Dashboard with time-resolved plots
-- Team management
-- Project management
-- Resource demand tracking
-- Resource allocation tracking
-- Visualizations for resource planning
+- **Dashboard**
+  - Overview of resource allocation, demand, and status
+  - Project health visualization
+  - Team allocation charts
+  - Resource trend analysis with period selection (Month/Quarter/Year)
+  - Upcoming key dates tracking
+
+- **Projects**
+  - Project management with timeline and status
+  - Project health metrics
+  - Project timeline visualization
+  - Project allocation breakdown
+
+- **People & Teams**
+  - Team management with hierarchical structure
+  - Resource capacity tracking
+  - Team allocation visualization
+  - Role and skill management
+
+- **Resource Planning**
+  - Demand tracking with priority and status
+  - Resource allocation with FTE tracking
+  - Gap analysis between demand and allocation
+  - Capacity utilization monitoring
 
 ## Installation
 
@@ -53,11 +71,23 @@ The application will open in your default web browser at http://localhost:8501.
 
 The application uses the following data models:
 
-- People: Resource people with skills and team assignments
-- Teams: Groups of people
-- Projects: Projects with timeline and status
-- Demands: Resource demands for projects
-- Allocations: Resource allocations to projects
+- **People**: Resource people with skills and team assignments
+  - id, name, role, team_id, fte_capacity, active
+
+- **Teams**: Groups of people with hierarchical structure
+  - id, name, description, parent_team_id
+
+- **Projects**: Projects with timeline and status
+  - id, name, description, start_date, end_date, status, project_manager_id, project_type, lead_team_id
+
+- **Demands**: Resource demands for projects
+  - id, project_id, role_required, fte_required, start_date, end_date, priority, status
+
+- **Allocations**: Resource allocations to projects
+  - id, person_id, project_id, demand_id, fte_allocated, start_date, end_date, notes
+
+- **Monthly Demand Allocation**: Aggregated reporting data
+  - id, year_month, project_id, demand_id, person_id, fte_demand, fte_allocated, fte_gap, status, capacity_fte
 
 ## Contributing
 
