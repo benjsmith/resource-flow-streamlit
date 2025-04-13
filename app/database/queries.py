@@ -1157,74 +1157,45 @@ def delete_allocation(conn, allocation_id: int) -> bool:
 
 # Monthly demand and allocation queries
 @with_connection(read_only=True)
-def get_monthly_demand_allocation(conn, start_date: date, end_date: date) -> List[MonthlyDemandAllocation]:
+def get_monthly_demand_allocation(conn, start_date: date, end_date: date) -> List[Dict]:
     """
-    Get monthly demand and allocation data for the specified date range.
+    Get monthly demand and allocation data for visualization.
     
     Args:
-        start_date: Start date for data
-        end_date: End date for data
+        start_date: Start date for the query
+        end_date: End date for the query
         
     Returns:
-        List of MonthlyDemandAllocation objects
+        List of dictionaries containing monthly allocation data
     """
-    # Check if capacity_fte column exists
-    has_capacity = conn.execute("""
-        SELECT COUNT(*) FROM pragma_table_info('monthly_demand_allocation') 
-        WHERE name = 'capacity_fte'
-    """).fetchone()[0]
-    
-    # Adjust query based on column existence
-    if has_capacity:
-        query = """
-            SELECT 
-                year_month,
-                demand_fte,
-                allocation_fte,
-                capacity_fte
-            FROM monthly_demand_allocation
-            WHERE year_month >= ? AND year_month <= ?
-            ORDER BY year_month
-        """
-    else:
-        # Create a temp view with capacity added (count of people)
-        conn.execute("""
-            CREATE OR REPLACE TEMP VIEW monthly_demand_allocation_with_capacity AS
-            SELECT 
-                mda.year_month,
-                mda.demand_fte,
-                mda.allocation_fte,
-                (SELECT COUNT(*) FROM people) AS capacity_fte
-            FROM monthly_demand_allocation mda
-        """)
-        
-        query = """
-            SELECT 
-                year_month,
-                demand_fte,
-                allocation_fte,
-                capacity_fte
-            FROM monthly_demand_allocation_with_capacity
-            WHERE year_month >= ? AND year_month <= ?
-            ORDER BY year_month
-        """
-    
-    # Convert to first day of month for comparison
+    # Convert dates to first day of month
     start_month = date(start_date.year, start_date.month, 1)
     end_month = date(end_date.year, end_date.month, 1)
     
+    query = """
+        SELECT 
+            year_month,
+            fte_demand,
+            fte_allocated,
+            fte_gap,
+            capacity_fte
+        FROM monthly_demand_allocation
+        WHERE year_month >= ? AND year_month <= ?
+        ORDER BY year_month
+    """
+    
     result = conn.execute(query, [start_month, end_month]).fetchall()
     
-    monthly_data = []
-    for row in result:
-        monthly_data.append(MonthlyDemandAllocation(
-            year_month=row[0],
-            demand_fte=row[1],
-            allocation_fte=row[2],
-            capacity_fte=row[3] if len(row) > 3 else 0
-        ))
-    
-    return monthly_data
+    return [
+        {
+            "year_month": row[0],
+            "fte_demand": row[1],
+            "fte_allocated": row[2],
+            "fte_gap": row[3],
+            "capacity_fte": row[4]
+        }
+        for row in result
+    ]
 
 @with_connection(read_only=False)
 def update_monthly_allocations(conn) -> None:

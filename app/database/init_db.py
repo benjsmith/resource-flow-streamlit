@@ -148,11 +148,18 @@ def create_tables(conn):
     # Create Monthly Demand Allocation table for aggregated reporting
     conn.execute("""
     CREATE TABLE monthly_demand_allocation (
+        id VARCHAR PRIMARY KEY,
         year_month DATE NOT NULL,
-        demand_fte FLOAT DEFAULT 0,
-        allocation_fte FLOAT DEFAULT 0,
-        capacity_fte FLOAT DEFAULT 0,
-        PRIMARY KEY (year_month)
+        project_id VARCHAR NOT NULL,
+        demand_id VARCHAR,
+        person_id VARCHAR,
+        fte_demand FLOAT DEFAULT 0,
+        fte_allocated FLOAT DEFAULT 0,
+        fte_gap FLOAT DEFAULT 0,
+        status VARCHAR,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (demand_id) REFERENCES demands(id),
+        FOREIGN KEY (person_id) REFERENCES people(id)
     )
     """)
 
@@ -270,104 +277,102 @@ def add_sample_data(conn):
         """, [allocation_id, person_id, proj_id, demand_id, fte, start_date, end_date, notes])
 
 def compute_monthly_allocations(conn=None):
-    """
-    Compute monthly demand and allocation data for visualization.
-    
-    Args:
-        conn: Optional database connection. If not provided, a new connection will be created.
-    """
-    should_close_conn = False
+    """Compute monthly allocation totals."""
     if conn is None:
         conn = duckdb.connect("resource_flow.duckdb")
-        should_close_conn = True
     
     try:
-        # Clear the existing data
+        # Clear existing monthly allocations
         conn.execute("DELETE FROM monthly_demand_allocation")
         
-        # Get the date range for all demands and allocations
-        date_range = conn.execute("""
+        # Get all demands
+        demands = conn.execute("""
             SELECT 
-                MIN(start_date) as min_date,
-                MAX(end_date) as max_date
-            FROM (
-                SELECT start_date, end_date FROM demands
-                UNION ALL
-                SELECT start_date, end_date FROM allocations
-            )
-        """).fetchone()
+                id,
+                project_id,
+                fte_required,
+                start_date,
+                end_date
+            FROM demands
+        """).fetchall()
         
-        if not date_range[0] or not date_range[1]:
-            return
+        # Get all allocations
+        allocations = conn.execute("""
+            SELECT 
+                id,
+                person_id,
+                project_id,
+                demand_id,
+                fte_allocated,
+                start_date,
+                end_date
+            FROM allocations
+        """).fetchall()
         
-        start_date = date_range[0]
-        end_date = date_range[1]
-        
-        # Generate a series of months
-        current_date = date(start_date.year, start_date.month, 1)
-        end_month = date(end_date.year, end_date.month, 1)
-        
-        # Get people count for capacity calculation
-        people_count = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
-        
-        while current_date <= end_month:
-            # Calculate days in the month
-            _, days_in_month = monthrange(current_date.year, current_date.month)
-            month_end = date(current_date.year, current_date.month, days_in_month)
+        # Process each month for each demand
+        for demand in demands:
+            demand_id = demand[0]
+            project_id = demand[1]
+            fte_required = demand[2]
+            start_date = demand[3]
+            end_date = demand[4]
             
-            # Calculate demand FTE for the month
-            demand_fte = conn.execute("""
-                SELECT COALESCE(SUM(
-                    fte_required * (
-                        CAST(
-                            (LEAST(end_date, ?) - GREATEST(start_date, ?))
-                            AS INTEGER) + 1
-                    ) / CAST(? AS INTEGER)
-                ), 0) as monthly_fte
-                FROM demands
-                WHERE start_date <= ? AND end_date >= ?
-            """, [month_end, current_date, days_in_month, month_end, current_date]).fetchone()[0]
+            # Get allocations for this demand
+            demand_allocations = [
+                a for a in allocations 
+                if a[3] == demand_id
+            ]
             
-            # Calculate allocation FTE for the month
-            allocation_fte = conn.execute("""
-                SELECT COALESCE(SUM(
-                    fte_allocated * (
-                        CAST(
-                            (LEAST(end_date, ?) - GREATEST(start_date, ?))
-                            AS INTEGER) + 1
-                    ) / CAST(? AS INTEGER)
-                ), 0) as monthly_fte
-                FROM allocations
-                WHERE start_date <= ? AND end_date >= ?
-            """, [month_end, current_date, days_in_month, month_end, current_date]).fetchone()[0]
-            
-            # Check if capacity_fte column exists in the table
-            has_capacity = conn.execute("""
-                SELECT COUNT(*) FROM pragma_table_info('monthly_demand_allocation') 
-                WHERE name = 'capacity_fte'
-            """).fetchone()[0]
-            
-            if has_capacity:
-                # Insert with capacity_fte
+            # Process each month
+            current_date = start_date
+            while current_date <= end_date:
+                month_end = date(
+                    current_date.year + (current_date.month == 12),
+                    1 if current_date.month == 12 else current_date.month + 1,
+                    1
+                ) - timedelta(days=1)
+                
+                # Calculate allocated FTE for this month
+                month_allocated = sum(
+                    a[4] for a in demand_allocations
+                    if a[5] <= month_end and a[6] >= current_date
+                )
+                
+                # Calculate gap
+                gap = fte_required - month_allocated
+                
+                # Determine status
+                if gap <= 0:
+                    status = 'filled'
+                elif month_allocated > 0:
+                    status = 'partially_filled'
+                else:
+                    status = 'unfilled'
+                
+                # Insert monthly allocation record
                 conn.execute("""
-                    INSERT INTO monthly_demand_allocation 
-                    (year_month, demand_fte, allocation_fte, capacity_fte)
-                    VALUES (?, ?, ?, ?)
-                """, [current_date, demand_fte, allocation_fte, people_count])
-            else:
-                # Insert without capacity_fte (older schema)
-                conn.execute("""
-                    INSERT INTO monthly_demand_allocation 
-                    (year_month, demand_fte, allocation_fte)
-                    VALUES (?, ?, ?)
-                """, [current_date, demand_fte, allocation_fte])
-            
-            # Move to next month
-            if current_date.month == 12:
-                current_date = date(current_date.year + 1, 1, 1)
-            else:
-                current_date = date(current_date.year, current_date.month + 1, 1)
+                    INSERT INTO monthly_demand_allocation (
+                        id, year_month, project_id, demand_id, 
+                        fte_demand, fte_allocated, fte_gap, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    str(uuid4()),
+                    date(current_date.year, current_date.month, 1),
+                    project_id,
+                    demand_id,
+                    fte_required,
+                    month_allocated,
+                    gap,
+                    status
+                ])
+                
+                # Move to next month
+                current_date = date(
+                    current_date.year + (current_date.month == 12),
+                    1 if current_date.month == 12 else current_date.month + 1,
+                    1
+                )
     
     finally:
-        if should_close_conn:
+        if conn and conn != duckdb.default_connection:
             conn.close() 

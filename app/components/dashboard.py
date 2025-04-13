@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, datetime, timedelta
+from typing import List, Dict
 
 from app.database import queries as db
 from app.utils.date_utils import get_months_between, format_date_display
@@ -93,139 +94,106 @@ def create_team_allocation_chart(team_allocations):
     
     return fig
 
-def aggregate_data_by_period(monthly_data, period="month"):
-    """Aggregate data by period (month, quarter, or year)."""
-    df = pd.DataFrame([{
-        "month": m.year_month.month,
-        "year": m.year_month.year,
-        "month_name": m.year_month.strftime("%b"),
-        "quarter": f"Q{(m.year_month.month-1)//3+1} {m.year_month.year}",
-        "year_str": str(m.year_month.year),
-        "capacity_fte": m.capacity_fte,
-        "allocation_fte": m.allocation_fte,
-        "demand_fte": m.demand_fte,
-        "gap_fte": m.capacity_fte - m.demand_fte
-    } for m in monthly_data])
-    
-    if df.empty:
-        return pd.DataFrame(columns=["Period", "capacity_fte", "allocation_fte", "demand_fte", "gap_fte"])
-    
-    # Group by period and aggregate
-    group_by = ""
-    if period == "month":
-        df["Period"] = df["month_name"] + " " + df["year"].astype(str)
-        group_by = "Period"
-    elif period == "quarter":
-        df["Period"] = df["quarter"]
-        group_by = "Period"
-    else:  # year
-        df["Period"] = df["year_str"]
-        group_by = "Period"
-    
-    # Aggregate by period
-    result = df.groupby(group_by).agg({
-        "capacity_fte": "mean",
-        "allocation_fte": "mean",
-        "demand_fte": "mean",
-        "gap_fte": "mean"
-    }).reset_index()
-    
-    # Sort by year and month
-    if period == "month":
-        # Create a sortable column (year*100 + month)
-        df["sort_key"] = df["year"] * 100 + df["month"]
-        sort_order = df.sort_values("sort_key")["Period"].unique()
-        result["Period"] = pd.Categorical(
-            result["Period"],
-            categories=sort_order,
-            ordered=True
-        )
-        result = result.sort_values("Period")
-    elif period == "quarter":
-        # Create a sortable column based on year and quarter
-        df["sort_key"] = df["year"] * 10 + (df["month"] - 1) // 3 + 1
-        # Get unique quarters in order
-        quarters = df.sort_values("sort_key")["quarter"].unique()
-        result["Period"] = pd.Categorical(
-            result["Period"],
-            categories=quarters,
-            ordered=True
-        )
-        result = result.sort_values("Period")
-    else:  # year
-        result = result.sort_values("Period")
-    
-    # Preprocess DataFrame for Plotly
-    result = preprocess_dataframe_for_plotly(result)
-    
-    return result
-
-def create_resource_trend_chart(monthly_data, period="month"):
+def aggregate_data_by_period(monthly_data: List[Dict], period: str = "month") -> pd.DataFrame:
     """
-    Create a line chart showing capacity vs allocation vs demand over time.
+    Aggregate monthly data by the specified period.
     
     Args:
-        monthly_data: List of MonthlyDemandAllocation objects
-        period: Time resolution ("month", "quarter", or "year")
+        monthly_data: List of monthly allocation data dictionaries
+        period: Aggregation period ("month", "quarter", or "year")
         
     Returns:
-        Plotly figure with the chart
+        DataFrame with aggregated data
     """
-    if not monthly_data:
-        return go.Figure()
+    # Convert year_month strings to datetime
+    df = pd.DataFrame(monthly_data)
+    df["year"] = pd.to_datetime(df["year_month"]).dt.year
+    df["month"] = pd.to_datetime(df["year_month"]).dt.month
     
-    # Aggregate data by selected period
+    if period == "month":
+        return df
+    elif period == "quarter":
+        df["quarter"] = df["month"].apply(lambda x: (x - 1) // 3 + 1)
+        return df.groupby(["year", "quarter"]).agg({
+            "fte_demand": "mean",
+            "fte_allocated": "mean",
+            "fte_gap": "mean",
+            "capacity_fte": "mean"
+        }).reset_index()
+    else:  # year
+        return df.groupby("year").agg({
+            "fte_demand": "mean",
+            "fte_allocated": "mean",
+            "fte_gap": "mean",
+            "capacity_fte": "mean"
+        }).reset_index()
+
+def create_resource_trend_chart(monthly_data: List[Dict], period: str = "month") -> go.Figure:
+    """
+    Create a line chart showing resource trends over time.
+    
+    Args:
+        monthly_data: List of monthly allocation data dictionaries
+        period: Time period for aggregation ("month", "quarter", or "year")
+        
+    Returns:
+        Plotly figure object
+    """
     df = aggregate_data_by_period(monthly_data, period)
     
+    # Create time labels
+    if period == "month":
+        df["time_label"] = df.apply(lambda x: f"{x['year']}-{x['month']:02d}", axis=1)
+    elif period == "quarter":
+        df["time_label"] = df.apply(lambda x: f"{x['year']} Q{x['quarter']}", axis=1)
+    else:
+        df["time_label"] = df["year"].astype(str)
+    
+    # Create the figure
     fig = go.Figure()
     
-    # Add traces
+    # Add demand line
     fig.add_trace(go.Scatter(
-        x=df["Period"],
+        x=df["time_label"],
+        y=df["fte_demand"],
+        name="Demand",
+        line=dict(color="red", width=2)
+    ))
+    
+    # Add allocation line
+    fig.add_trace(go.Scatter(
+        x=df["time_label"],
+        y=df["fte_allocated"],
+        name="Allocated",
+        line=dict(color="green", width=2)
+    ))
+    
+    # Add capacity line
+    fig.add_trace(go.Scatter(
+        x=df["time_label"],
         y=df["capacity_fte"],
         name="Capacity",
-        line=dict(color="rgb(26, 118, 255)", width=2),
-        mode="lines+markers"
+        line=dict(color="blue", width=2, dash="dash")
     ))
     
-    fig.add_trace(go.Scatter(
-        x=df["Period"],
-        y=df["allocation_fte"],
-        name="Allocation",
-        line=dict(color="rgb(55, 83, 109)", width=2),
-        mode="lines+markers"
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=df["Period"],
-        y=df["demand_fte"],
-        name="Demand",
-        line=dict(color="rgb(244, 67, 54)", width=2),
-        mode="lines+markers"
-    ))
-    
+    # Update layout
     fig.update_layout(
-        showlegend=True,
-        margin=dict(l=0, r=0, t=20, b=0),
-        height=300,
+        title="Resource Trends",
+        xaxis_title="Time Period",
         yaxis_title="FTE",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
+        showlegend=True,
+        height=400
     )
     
     return fig
 
 def render_dashboard():
-    """Render the main dashboard view."""
+    """Render the dashboard view."""
     st.title("Resource Flow Dashboard")
     
     # Get date range from session state
-    start_date, end_date = st.session_state.date_range
+    start_date = st.session_state.date_range[0]
+    end_date = st.session_state.date_range[1]
     
     # Tab navigation for different dashboard views
     tabs = st.tabs(["Overview", "Allocations", "Projects"])
@@ -242,12 +210,12 @@ def render_dashboard():
         with col1:
             st.subheader("Project Health")
             fig_project_health = create_project_health_chart(projects)
-            st.plotly_chart(prepare_figure_for_streamlit(fig_project_health), use_container_width=True)
+            st.plotly_chart(fig_project_health, use_container_width=True)
         
         with col2:
             st.subheader("Team Allocation")
             fig_team_allocation = create_team_allocation_chart(team_allocations)
-            st.plotly_chart(prepare_figure_for_streamlit(fig_team_allocation), use_container_width=True)
+            st.plotly_chart(fig_team_allocation, use_container_width=True)
         
         # Resource trend over time
         st.subheader("Resource Trend")
@@ -265,7 +233,7 @@ def render_dashboard():
             period=period.lower()
         )
         
-        st.plotly_chart(prepare_figure_for_streamlit(fig_resource_trend), use_container_width=True)
+        st.plotly_chart(fig_resource_trend, use_container_width=True)
         
         # Upcoming Key Dates
         st.subheader("Upcoming Key Dates")
@@ -308,9 +276,9 @@ def render_dashboard():
         # Display as table
         if upcoming_dates:
             data = pd.DataFrame(upcoming_dates)
-            # Ensure date column is properly formatted without using dt accessor
+            # Ensure date column is properly formatted
             data["formatted_date"] = [d.strftime("%b %d, %Y") if hasattr(d, "strftime") else str(d) 
-                                     for d in data["date"]]
+                                    for d in data["date"]]
             st.dataframe(data[["formatted_date", "event"]], hide_index=True)
         else:
             st.info("No upcoming key dates found.")
@@ -325,43 +293,66 @@ def render_dashboard():
         # Current month summary
         today = date.today()
         current_month_first_day = date(today.year, today.month, 1)
-        current_month_data = next(
-            (m for m in monthly_data if m.year_month == current_month_first_day), 
-            None
-        )
+        try:
+            current_month_data = next(
+                m for m in monthly_data 
+                if pd.to_datetime(m["year_month"]).date() == current_month_first_day
+            )
+        except StopIteration:
+            current_month_data = {
+                "fte_demand": 0,
+                "fte_allocated": 0,
+                "fte_gap": 0,
+                "capacity_fte": 0
+            }
         
-        if current_month_data:
-            col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Capacity", 
+                f"{current_month_data['capacity_fte']:.1f} FTE"
+            )
+        
+        with col2:
+            st.metric(
+                "Allocation", 
+                f"{current_month_data['fte_allocated']:.1f} FTE",
+                f"{100 * current_month_data['fte_allocated'] / current_month_data['capacity_fte']:.0f}%" 
+                if current_month_data['capacity_fte'] > 0 else "N/A"
+            )
+        
+        with col3:
+            st.metric(
+                "Demand", 
+                f"{current_month_data['fte_demand']:.1f} FTE"
+            )
+        
+        with col4:
+            gap = current_month_data['capacity_fte'] - current_month_data['fte_demand']
+            gap_status = classify_gap(gap, current_month_data['capacity_fte'])
             
-            with col1:
-                st.metric(
-                    "Capacity", 
-                    f"{current_month_data.capacity_fte:.1f} FTE",
-                )
-            
-            with col2:
-                st.metric(
-                    "Allocation", 
-                    f"{current_month_data.allocation_fte:.1f} FTE",
-                    f"{100 * current_month_data.allocation_fte / current_month_data.capacity_fte:.0f}%" 
-                    if current_month_data.capacity_fte > 0 else "N/A"
-                )
-            
-            with col3:
-                st.metric(
-                    "Demand", 
-                    f"{current_month_data.demand_fte:.1f} FTE",
-                )
-            
-            with col4:
-                gap = current_month_data.capacity_fte - current_month_data.demand_fte
-                gap_status = classify_gap(gap, current_month_data.capacity_fte)
-                
-                st.metric(
-                    "Gap", 
-                    f"{gap:.1f} FTE",
-                    delta_color="normal" if gap_status == "optimal" else "inverse",
-                )
+            st.metric(
+                "Gap", 
+                f"{gap:.1f} FTE",
+                delta_color="normal" if gap_status == "optimal" else "inverse",
+            )
+        
+        # Project allocation breakdown
+        st.subheader("Project Allocation Breakdown")
+        if resources_by_project:
+            df = pd.DataFrame(resources_by_project)
+            st.dataframe(
+                df[["project_name", "num_people", "total_fte"]],
+                column_config={
+                    "project_name": "Project",
+                    "num_people": "People",
+                    "total_fte": "FTE"
+                },
+                hide_index=True
+            )
+        else:
+            st.info("No project allocations found.")
     
     with tabs[2]:  # Projects tab
         # Get project data
@@ -383,7 +374,7 @@ def render_dashboard():
                 with status_cols[i]:
                     st.metric(
                         f"{status.title()}", 
-                        count,
+                        count
                     )
             
             # Project timeline
@@ -391,6 +382,6 @@ def render_dashboard():
             
             st.subheader("Project Timeline")
             fig_project_timeline = create_project_gantt(projects)
-            st.plotly_chart(prepare_figure_for_streamlit(fig_project_timeline), use_container_width=True)
+            st.plotly_chart(fig_project_timeline, use_container_width=True)
         else:
             st.info("No projects found. Add some projects to see the overview.")

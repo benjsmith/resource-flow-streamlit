@@ -1,172 +1,58 @@
 import duckdb
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
+from calendar import monthrange
 from uuid import uuid4
+from app.database.queries import get_db_connection
 
 def migrate_database():
-    """Migrate the database to the latest schema."""
-    db_path = "resource_flow.duckdb"
-    
-    if not os.path.exists(db_path):
-        print(f"Database not found at {db_path}")
-        return
-    
-    # Connect to the database
-    conn = duckdb.connect(db_path)
-    
-    try:
-        # Check if tables are already using UUID - check teams table
-        has_uuid_pk = check_if_using_uuid(conn)
-        
-        if not has_uuid_pk:
-            # Need to migrate from integer IDs to UUIDs
-            print("Migrating database from integer IDs to UUIDs...")
-            
-            # Create backup before migration
-            conn.execute("EXPORT DATABASE 'resource_flow_backup'")
-            print("Database backup created at 'resource_flow_backup'")
-            
-            try:
-                # Migrate tables to use UUID
-                migrate_to_uuid(conn)
-                print("Migration to UUIDs completed successfully")
-            except Exception as e:
-                print(f"Error during UUID migration: {e}")
-                print("Restoring database from backup...")
-                
-                # Close the connection to release any locks
-                conn.close()
-                
-                # Ensure the database file exists to avoid errors
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                
-                # Restore from backup using DuckDB Python API
-                # Create a new database
-                try:
-                    conn = duckdb.connect(db_path)
-                    
-                    # Read and execute SQL statements from the backup
-                    with open("resource_flow_backup/schema.sql", "r") as schema_file:
-                        schema_sql = schema_file.read()
-                        conn.execute(schema_sql)
-                    
-                    # Import all CSV files from backup directory
-                    backup_dir = "resource_flow_backup"
-                    for table_file in os.listdir(backup_dir):
-                        if table_file.endswith(".csv") and table_file != "schema.sql":
-                            table_name = table_file.split(".")[0]
-                            conn.execute(f"""
-                                COPY {table_name} FROM '{backup_dir}/{table_file}' 
-                                (HEADER, DELIMITER ',')
-                            """)
-                    
-                    print("Database successfully restored from backup")
-                except Exception as restore_error:
-                    print(f"Error restoring database: {restore_error}")
-                    print("You may need to manually restore from 'resource_flow_backup' directory")
-                finally:
-                    if conn:
-                        conn.close()
-                
-                # Reconnect to the database
-                conn = duckdb.connect(db_path)
-        
-        # Check if the capacity_fte column exists in monthly_demand_allocation
-        has_capacity = conn.execute("""
-            SELECT COUNT(*) FROM pragma_table_info('monthly_demand_allocation') 
-            WHERE name = 'capacity_fte'
-        """).fetchone()[0]
-        
-        if not has_capacity:
-            print("Migrating monthly_demand_allocation table to add capacity_fte column...")
-            
-            # Create a backup of the current data
+    """Run database migrations."""
+    with get_db_connection() as conn:
+        try:
+            # Check if migrations table exists
             conn.execute("""
-                CREATE TEMP TABLE monthly_demand_allocation_backup AS
-                SELECT * FROM monthly_demand_allocation
+                CREATE TABLE IF NOT EXISTS migrations (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
             """)
             
-            # Add the capacity_fte column to the table
-            conn.execute("""
-                ALTER TABLE monthly_demand_allocation ADD COLUMN capacity_fte FLOAT DEFAULT 0
-            """)
+            # Get list of applied migrations
+            applied_migrations = set(
+                row[0] for row in conn.execute("SELECT name FROM migrations").fetchall()
+            )
             
-            # Update capacity values (set to people count for simplicity)
-            people_count = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
-            conn.execute(f"""
-                UPDATE monthly_demand_allocation
-                SET capacity_fte = {people_count}
-            """)
+            # Define migrations
+            migrations = [
+                {
+                    "name": "add_capacity_fte_to_monthly_demand_allocation",
+                    "sql": """
+                        ALTER TABLE monthly_demand_allocation 
+                        ADD COLUMN IF NOT EXISTS capacity_fte FLOAT DEFAULT 8.0;
+                    """
+                }
+            ]
             
-            print(f"Added capacity_fte column with default value {people_count}")
-            
-            # Recompute monthly allocations
-            print("Recomputing monthly allocations...")
-            from app.database.init_db import compute_monthly_allocations
-            compute_monthly_allocations(conn)
-            
-            print("Capacity migration completed successfully!")
-        
-        # Project fields migration
-        # Check if columns exist in projects table
-        columns = conn.execute("""
-            SELECT name FROM pragma_table_info('projects')
-        """).fetchall()
-        column_names = [col[0] for col in columns]
-        
-        project_columns_added = False
-        
-        # Check if we need to convert project_manager to project_manager_id
-        if "project_manager" in column_names and "project_manager_id" not in column_names:
-            print("Converting project_manager from string to project_manager_id reference...")
-            
-            # First add the project_manager_id column (without foreign key constraint)
-            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id VARCHAR")
-            
-            # Then try to match project_manager names to people names
-            # Get all projects with project_manager set
-            projects_with_managers = conn.execute("""
-                SELECT id, project_manager FROM projects 
-                WHERE project_manager IS NOT NULL AND project_manager != ''
-            """).fetchall()
-            
-            # Get all people for matching
-            people = conn.execute("SELECT id, name FROM people").fetchall()
-            people_map = {person[1]: person[0] for person in people}
-            
-            # Update each project's project_manager_id if we can find a match
-            for project_id, manager_name in projects_with_managers:
-                if manager_name in people_map:
-                    person_id = people_map[manager_name]
-                    conn.execute(
-                        "UPDATE projects SET project_manager_id = ? WHERE id = ?",
-                        [person_id, project_id]
-                    )
-            
-            # Don't drop the old column yet - we'll do that in a future migration
-            project_columns_added = True
-        elif "project_manager_id" not in column_names:
-            # Add project_manager_id column if it doesn't exist (without foreign key constraint)
-            conn.execute("ALTER TABLE projects ADD COLUMN project_manager_id VARCHAR")
-            project_columns_added = True
-        
-        # Add project_type column if it doesn't exist
-        if "project_type" not in column_names:
-            conn.execute("ALTER TABLE projects ADD COLUMN project_type VARCHAR")
-            project_columns_added = True
-        
-        # Add lead_team_id column if it doesn't exist (without foreign key constraint)
-        if "lead_team_id" not in column_names:
-            conn.execute("ALTER TABLE projects ADD COLUMN lead_team_id VARCHAR")
-            project_columns_added = True
-        
-        if project_columns_added:
-            print("Added new project fields: project_manager_id, project_type, and lead_team_id")
-    
-    finally:
-        if conn:
-            conn.close()
+            # Run pending migrations
+            for migration in migrations:
+                if migration["name"] not in applied_migrations:
+                    try:
+                        print(f"Applying migration: {migration['name']}...")
+                        conn.execute(migration["sql"])
+                        # Get next ID
+                        next_id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM migrations").fetchone()[0]
+                        conn.execute(
+                            "INSERT INTO migrations (id, name) VALUES (?, ?)",
+                            [next_id, migration["name"]]
+                        )
+                        print(f"Successfully applied migration: {migration['name']}")
+                    except Exception as e:
+                        print(f"Error applying migration {migration['name']}: {e}")
+                        raise
+        except Exception as e:
+            print(f"Migration error: {e}")
+            raise
 
 def check_if_using_uuid(conn):
     """Check if the database is already using UUIDs for primary keys."""
