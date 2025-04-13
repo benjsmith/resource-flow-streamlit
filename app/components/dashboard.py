@@ -107,25 +107,46 @@ def aggregate_data_by_period(monthly_data: List[Dict], period: str = "month") ->
     """
     # Convert year_month strings to datetime
     df = pd.DataFrame(monthly_data)
-    df["year"] = pd.to_datetime(df["year_month"]).dt.year
-    df["month"] = pd.to_datetime(df["year_month"]).dt.month
+    df["year_month"] = pd.to_datetime(df["year_month"])
+    df["year"] = df["year_month"].dt.year
+    df["month"] = df["year_month"].dt.month
     
     if period == "month":
+        # For monthly data, we need to ensure we have all months in the range
+        min_date = df["year_month"].min()
+        max_date = df["year_month"].max()
+        all_months = pd.date_range(start=min_date, end=max_date, freq='MS')
+        
+        # Create a complete DataFrame with all months
+        complete_df = pd.DataFrame({"year_month": all_months})
+        complete_df["year"] = complete_df["year_month"].dt.year
+        complete_df["month"] = complete_df["year_month"].dt.month
+        
+        # Merge with original data
+        df = pd.merge(complete_df, df, on=["year_month", "year", "month"], how="left")
+        
+        # Fill missing values with 0
+        df = df.fillna(0)
+        
         return df
+    
     elif period == "quarter":
         df["quarter"] = df["month"].apply(lambda x: (x - 1) // 3 + 1)
+        # Group by quarter and sum the values
         return df.groupby(["year", "quarter"]).agg({
-            "fte_demand": "mean",
-            "fte_allocated": "mean",
-            "fte_gap": "mean",
-            "capacity_fte": "mean"
+            "fte_demand": "sum",
+            "fte_allocated": "sum",
+            "fte_gap": "sum",
+            "capacity_fte": "mean"  # Use mean for capacity as it's constant
         }).reset_index()
+    
     else:  # year
+        # Group by year and sum the values
         return df.groupby("year").agg({
-            "fte_demand": "mean",
-            "fte_allocated": "mean",
-            "fte_gap": "mean",
-            "capacity_fte": "mean"
+            "fte_demand": "sum",
+            "fte_allocated": "sum",
+            "fte_gap": "sum",
+            "capacity_fte": "mean"  # Use mean for capacity as it's constant
         }).reset_index()
 
 def create_resource_trend_chart(monthly_data: List[Dict], period: str = "month") -> go.Figure:

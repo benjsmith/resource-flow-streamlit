@@ -382,6 +382,48 @@ def compute_monthly_allocations(conn=None):
                     1 if current_date.month == 12 else current_date.month + 1,
                     1
                 )
+        
+        # Add records for direct allocations (those not linked to demands)
+        direct_allocations = [a for a in allocations if not a[3]]
+        for allocation in direct_allocations:
+            current_date = allocation[5]  # start_date
+            end_date = allocation[6]  # end_date
+            
+            while current_date <= end_date:
+                month_end = date(
+                    current_date.year + (current_date.month == 12),
+                    1 if current_date.month == 12 else current_date.month + 1,
+                    1
+                ) - timedelta(days=1)
+                
+                # Calculate allocated FTE for this month
+                month_allocated = allocation[4] if allocation[5] <= month_end and allocation[6] >= current_date else 0
+                
+                # Insert monthly allocation record for direct allocation
+                conn.execute("""
+                    INSERT INTO monthly_demand_allocation (
+                        id, year_month, project_id, person_id,
+                        fte_demand, fte_allocated, fte_gap, status,
+                        capacity_fte
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    str(uuid4()),
+                    date(current_date.year, current_date.month, 1),
+                    allocation[2],  # project_id
+                    allocation[1],  # person_id
+                    0,  # No demand for direct allocations
+                    month_allocated,
+                    0,  # No gap for direct allocations
+                    'direct_allocation',
+                    total_capacity
+                ])
+                
+                # Move to next month
+                current_date = date(
+                    current_date.year + (current_date.month == 12),
+                    1 if current_date.month == 12 else current_date.month + 1,
+                    1
+                )
     
     finally:
         if conn and conn != duckdb.default_connection:
