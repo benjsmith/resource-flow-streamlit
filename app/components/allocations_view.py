@@ -8,25 +8,20 @@ from app.visualizations.gantt_chart import create_allocation_gantt
 from app.utils.plotly_utils import prepare_figure_for_streamlit
 
 def render_allocations_view():
-    """
-    Render the resource allocations management view
-    """
+    """Render the resource allocations management view."""
     st.header("Resource Allocations Management")
     
     # Create tabs for different actions
-    tab1, tab2, tab3 = st.tabs(["Allocations List", "Add/Edit Allocation", "Allocation Timeline"])
+    tab1, tab2 = st.tabs(["Allocations List", "Allocation Timeline"])
     
     with tab1:
         render_allocations_list()
     
     with tab2:
-        render_allocation_form()
-    
-    with tab3:
         render_allocation_timeline()
 
 def render_allocations_list():
-    """Render the list of allocations with filters and actions."""
+    """Render a list of allocations with actions."""
     # Add filters for allocations view
     col1, col2 = st.columns(2)
     
@@ -66,66 +61,94 @@ def render_allocations_list():
                 selected_project_id = id
                 break
     
+    # Add a button to create a new allocation
+    if st.button("Add New Allocation", key="add_allocation_button"):
+        st.session_state.show_allocation_form = True
+        st.session_state.editing_allocation = None
+    
     # Get allocations based on filters
     allocations = db.get_allocations(person_id=selected_person_id, project_id=selected_project_id)
     
-    if not allocations:
-        st.info("No allocations found matching the selected criteria. Please add some allocations to get started.")
-        return
-    
-    # Get people and project names for display
-    person_map = {person.id: person.name for person in people}
-    project_map = {project.id: project.name for project in projects}
-    
-    # Get demands for reference
-    all_demands = db.get_demands()
-    demand_map = {demand.id: f"{project_map.get(demand.project_id, 'Unknown')} - {demand.role_required}" for demand in all_demands}
-    
-    # Convert to DataFrame for display
-    allocations_data = []
-    for alloc in allocations:
-        allocations_data.append({
-            "ID": alloc.id,
-            "Person": person_map.get(alloc.person_id, "Unknown"),
-            "Project": project_map.get(alloc.project_id, "Unknown"),
-            "Demand": demand_map.get(alloc.demand_id, "Direct Allocation") if alloc.demand_id else "Direct Allocation",
-            "FTE": alloc.fte_allocated,
-            "Start Date": alloc.start_date,
-            "End Date": alloc.end_date,
-            "Notes": alloc.notes
-        })
-    
-    df = pd.DataFrame(allocations_data)
-    
-    # Display allocations
-    st.dataframe(df, use_container_width=True)
-    
-    # Add actions for selected allocation
-    st.subheader("Actions")
-    
-    cols = st.columns(3)
-    with cols[0]:
-        # Create a selectbox for allocation selection
-        allocation_options = [(str(a.id), f"{a.person_name or 'Unknown'} - {a.project_name or 'Unknown'}") for a in allocations]
-        selected_allocation = st.selectbox(
-            "Select Allocation",
-            options=[option[0] for option in allocation_options],
-            format_func=lambda x: next((opt[1] for opt in allocation_options if opt[0] == x), x),
-            key="allocation_selector"
+    # Display allocations in a dataframe
+    if allocations:
+        # Get people and project names for display
+        person_map = {person.id: person.name for person in people}
+        project_map = {project.id: project.name for project in projects}
+        
+        # Get demands for reference
+        all_demands = db.get_demands()
+        demand_map = {demand.id: f"{project_map.get(demand.project_id, 'Unknown')} - {demand.role_required}" for demand in all_demands}
+        
+        # Convert to DataFrame for display
+        allocations_data = []
+        for alloc in allocations:
+            allocations_data.append({
+                "ID": alloc.id,
+                "Person": person_map.get(alloc.person_id, "Unknown"),
+                "Project": project_map.get(alloc.project_id, "Unknown"),
+                "Demand": demand_map.get(alloc.demand_id, "Direct Allocation") if alloc.demand_id else "Direct Allocation",
+                "FTE": alloc.fte_allocated,
+                "Start Date": alloc.start_date,
+                "End Date": alloc.end_date,
+                "Notes": alloc.notes
+            })
+        
+        df = pd.DataFrame(allocations_data)
+        
+        # Display in a dataframe
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Selection for editing
+        selected_allocation_id = st.selectbox(
+            "Select an allocation to edit:",
+            options=[a.id for a in allocations],
+            format_func=lambda x: next((f"{a.person_name} - {a.project_name}" for a in allocations if a.id == x), ""),
         )
-        allocation_id = selected_allocation
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Edit Selected Allocation", use_container_width=True):
+                st.session_state.show_allocation_form = True
+                st.session_state.editing_allocation = next((a for a in allocations if a.id == selected_allocation_id), None)
+                st.rerun()
+        
+        with col2:
+            if st.button("Delete Selected Allocation", use_container_width=True):
+                # Confirm deletion
+                st.session_state.confirm_delete_allocation = selected_allocation_id
+                st.rerun()
+    else:
+        st.info("No allocations found matching the selected criteria. Add some allocations to get started.")
     
-    with cols[1]:
-        edit_allocation = st.button("Edit Allocation")
+    # Handle delete confirmation
+    if "confirm_delete_allocation" in st.session_state and st.session_state.confirm_delete_allocation:
+        allocation_id = st.session_state.confirm_delete_allocation
+        allocation = next((a for a in allocations if a.id == allocation_id), None)
+        
+        if allocation:
+            st.warning(f"Are you sure you want to delete the allocation for {allocation.person_name} in {allocation.project_name}?")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Yes, Delete", type="primary"):
+                    if db.delete_allocation(allocation_id):
+                        st.success("Allocation deleted successfully!")
+                        st.session_state.confirm_delete_allocation = None
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete allocation.")
+            
+            with col2:
+                if st.button("Cancel"):
+                    st.session_state.confirm_delete_allocation = None
+                    st.rerun()
     
-    if edit_allocation and allocation_id:
-        # Store the allocation ID in session state for editing
-        st.session_state.edit_allocation_id = allocation_id
-        # Switch to the Add/Edit tab
-        st.rerun()
+    # Show form for adding/editing an allocation
+    if "show_allocation_form" in st.session_state and st.session_state.show_allocation_form:
+        render_allocation_form(st.session_state.editing_allocation)
 
 def render_allocation_timeline():
-    """Render the allocation timeline view."""
+    """Render a timeline view of allocations."""
     # Get date range from session state
     start_date, end_date = st.session_state.date_range
     
@@ -142,43 +165,14 @@ def render_allocation_timeline():
     # Display the chart
     st.plotly_chart(prepare_figure_for_streamlit(fig), use_container_width=True)
 
-def render_allocation_form():
-    """Render the form for adding or editing an allocation."""
-    st.subheader("Add/Edit Allocation")
+def render_allocation_form(allocation=None):
+    """Render a form for adding or editing an allocation."""
+    is_edit = allocation is not None
+    form_title = "Edit Allocation" if is_edit else "Add New Allocation"
     
-    # Add clear button at the top of the form if in edit mode
-    if "edit_allocation_id" in st.session_state and st.session_state.edit_allocation_id is not None:
-        if st.button("Clear Form (Add New Allocation)"):
-            st.session_state.edit_allocation_id = None
-            st.rerun()
+    st.subheader(form_title)
     
-    # Initialize the allocation object
-    if "edit_allocation_id" in st.session_state and st.session_state.edit_allocation_id:
-        # Editing an existing allocation
-        allocation = db.get_allocation(st.session_state.edit_allocation_id)
-        if not allocation:
-            st.error(f"Allocation with ID {st.session_state.edit_allocation_id} not found")
-            st.session_state.edit_allocation_id = None
-            st.rerun()
-            return
-        editing = True
-    else:
-        # Creating a new allocation
-        today = date.today()
-        allocation = Allocation(
-            id=None, 
-            person_id=None,
-            project_id=None,
-            demand_id=None,
-            fte_allocated=0.5, 
-            start_date=today, 
-            end_date=today + timedelta(days=90),
-            notes=""
-        )
-        editing = False
-    
-    # Create the form
-    with st.form("allocation_form"):
+    with st.form(key="allocation_form"):
         # Person selection
         people = db.get_people()
         person_options = [(person.name, person.id) for person in people]
@@ -189,125 +183,127 @@ def render_allocation_form():
         
         # Find the current person index
         person_index = 0
-        for i, (person_name, person_id) in enumerate(person_options):
-            if person_id == allocation.person_id:
-                person_index = i
-                break
+        if is_edit:
+            for i, (person_name, person_id) in enumerate(person_options):
+                if person_id == allocation.person_id:
+                    person_index = i
+                    break
         
         selected_person = st.selectbox(
             "Person",
             options=[name for name, _ in person_options],
             index=min(person_index, len(person_options) - 1)
         )
-        
-        # Update the person_id based on selection
-        for name, id in person_options:
-            if name == selected_person:
-                allocation.person_id = id
-                break
+        person_id = next((id for name, id in person_options if name == selected_person), None)
         
         # Project selection
         projects = db.get_projects()
         project_options = [(project.name, project.id) for project in projects]
         
         if not project_options:
-            st.error("No projects available. Please create a project first.")
+            st.error("No projects available. Please add a project first.")
             return
         
         # Find the current project index
         project_index = 0
-        for i, (project_name, project_id) in enumerate(project_options):
-            if project_id == allocation.project_id:
-                project_index = i
-                break
+        if is_edit:
+            for i, (project_name, project_id) in enumerate(project_options):
+                if project_id == allocation.project_id:
+                    project_index = i
+                    break
         
         selected_project = st.selectbox(
             "Project",
             options=[name for name, _ in project_options],
             index=min(project_index, len(project_options) - 1)
         )
-        
-        # Update the project_id based on selection
-        selected_project_id = None
-        for name, id in project_options:
-            if name == selected_project:
-                allocation.project_id = id
-                selected_project_id = id
-                break
+        project_id = next((id for name, id in project_options if name == selected_project), None)
         
         # Demand selection (optional)
-        if selected_project_id:
-            demands = db.get_demands(project_id=selected_project_id)
-            demand_options = [("None/Direct Allocation", None)] + [
-                (f"{demand.role_required} ({demand.fte_required} FTE, {demand.start_date} to {demand.end_date})", 
-                 demand.id) 
-                for demand in demands
-            ]
-            
-            # Find the current demand index
-            demand_index = 0
-            for i, (demand_name, demand_id) in enumerate(demand_options):
+        demands = db.get_demands(project_id=project_id)
+        demand_options = [(None, "Direct Allocation")] + [(demand.id, f"{demand.role_required} ({demand.fte_required} FTE)") for demand in demands]
+        
+        # Find the current demand index
+        demand_index = 0
+        if is_edit:
+            for i, (demand_id, _) in enumerate(demand_options):
                 if demand_id == allocation.demand_id:
                     demand_index = i
                     break
-            
-            selected_demand = st.selectbox(
-                "Link to Demand (Optional)",
-                options=[name for name, _ in demand_options],
-                index=demand_index
-            )
-            
-            # Update the demand_id based on selection
-            for name, id in demand_options:
-                if name == selected_demand:
-                    allocation.demand_id = id
-                    break
         
-        # FTE allocation
-        fte_allocated = st.number_input(
-            "FTE Allocated",
-            min_value=0.1,
-            max_value=1.0,
-            value=allocation.fte_allocated,
-            step=0.1
+        selected_demand = st.selectbox(
+            "Demand (Optional)",
+            options=[name for _, name in demand_options],
+            index=min(demand_index, len(demand_options) - 1)
         )
+        demand_id = next((id for id, name in demand_options if name == selected_demand), None)
         
-        # Date range
+        # FTE and dates
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("Start Date", value=allocation.start_date)
+            fte = st.number_input(
+                "FTE Allocated",
+                min_value=0.0,
+                max_value=1.0,
+                value=allocation.fte_allocated if is_edit else 0.5,
+                step=0.1
+            )
+            
+            start_date = st.date_input(
+                "Start Date",
+                value=allocation.start_date if is_edit else date.today()
+            )
+        
         with col2:
-            end_date = st.date_input("End Date", value=allocation.end_date)
+            notes = st.text_area(
+                "Notes",
+                value=allocation.notes if is_edit else ""
+            )
+            
+            end_date = st.date_input(
+                "End Date",
+                value=allocation.end_date if is_edit else date.today() + timedelta(days=90)
+            )
         
-        # Notes
-        notes = st.text_area("Notes", value=allocation.notes or "", height=100)
+        col1, col2 = st.columns(2)
+        with col1:
+            submit_button = st.form_submit_button("Save", use_container_width=True)
+        with col2:
+            cancel_button = st.form_submit_button("Cancel", use_container_width=True)
         
-        submitted = st.form_submit_button("Save Allocation")
-        
-        if submitted:
-            if not allocation.person_id:
-                st.error("Person is required")
-            elif not allocation.project_id:
-                st.error("Project is required")
-            elif end_date < start_date:
+        if submit_button:
+            if end_date < start_date:
                 st.error("End date must be after start date")
             else:
-                # Update allocation object
-                allocation.fte_allocated = fte_allocated
-                allocation.start_date = start_date
-                allocation.end_date = end_date
-                allocation.notes = notes
-                
-                # Save to database
-                allocation_id = db.save_allocation(allocation)
+                # Create or update allocation
+                if is_edit:
+                    allocation.person_id = person_id
+                    allocation.project_id = project_id
+                    allocation.demand_id = demand_id
+                    allocation.fte_allocated = fte
+                    allocation.start_date = start_date
+                    allocation.end_date = end_date
+                    allocation.notes = notes
+                    allocation_id = db.save_allocation(allocation)
+                else:
+                    new_allocation = Allocation(
+                        person_id=person_id,
+                        project_id=project_id,
+                        demand_id=demand_id,
+                        fte_allocated=fte,
+                        start_date=start_date,
+                        end_date=end_date,
+                        notes=notes
+                    )
+                    allocation_id = db.save_allocation(new_allocation)
                 
                 if allocation_id:
-                    action = "updated" if editing else "added"
-                    st.success(f"Allocation {action} successfully")
-                    
-                    # Clear the edit allocation ID
-                    if editing:
-                        st.session_state.edit_allocation_id = None
-                        st.rerun()
+                    st.success("Allocation saved successfully!")
+                    st.session_state.show_allocation_form = False
+                    st.rerun()
                 else:
-                    st.error("Failed to save allocation") 
+                    st.error("Failed to save allocation")
+        
+        if cancel_button:
+            st.session_state.show_allocation_form = False
+            st.rerun() 

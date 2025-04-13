@@ -8,13 +8,20 @@ from app.visualizations.gantt_chart import create_project_gantt
 from app.utils.plotly_utils import prepare_figure_for_streamlit
 
 def render_projects_view():
-    """Render the projects management view with master-detail layout."""
+    """Render the projects management view."""
     st.header("Projects Management")
     
-    # Initialize session state for selected project
-    if "selected_project_id" not in st.session_state:
-        st.session_state.selected_project_id = None
+    # Create tabs for different actions
+    tab1, tab2 = st.tabs(["Project List", "Project Timeline"])
     
+    with tab1:
+        render_project_list()
+    
+    with tab2:
+        render_project_timeline()
+
+def render_project_list():
+    """Render a list of projects with actions."""
     # Add filter for project status at the top
     status_options = ["All", "planning", "active", "completed", "cancelled"]
     selected_status = st.selectbox("Filter by Status", status_options)
@@ -25,150 +32,123 @@ def render_projects_view():
     else:
         projects = db.get_projects(status=selected_status)
     
-    # Layout with two columns: master list and detail view
-    col1, col2 = st.columns([1, 2])
+    # Add a button to create a new project
+    if st.button("Add New Project", key="add_project_button"):
+        st.session_state.show_project_form = True
+        st.session_state.editing_project = None
     
-    with col1:
-        render_projects_list(projects)
-    
-    with col2:
-        if st.session_state.selected_project_id:
-            render_project_details()
-        else:
-            st.info("Select a project from the list or click 'Add New Project' to get started.")
-
-def render_projects_list(projects):
-    """Render the list of projects with selection capability."""
-    # Add New Project button
-    if st.button("Add New Project", key="add_new_project"):
-        st.session_state.selected_project_id = "new"
-        st.rerun()
-    
-    st.markdown("---")
-    
+    # Display projects in a dataframe
     if projects:
-        # Create a selectbox for project selection
-        selected_index = 0
-        if st.session_state.selected_project_id and st.session_state.selected_project_id != "new":
-            selected_index = next((i for i, p in enumerate(projects) if p.id == st.session_state.selected_project_id), 0)
+        # Convert to dataframe for display
+        projects_data = []
+        for project in projects:
+            projects_data.append({
+                "ID": project.id,
+                "Name": project.name,
+                "Status": project.status,
+                "Project Manager": project.project_manager_name or "-",
+                "Lead Team": project.lead_team_name or "-",
+                "Start Date": project.start_date,
+                "End Date": project.end_date
+            })
         
-        selected_project = st.selectbox(
-            "Select Project",
-            options=projects,
-            format_func=lambda x: x.name,
-            index=selected_index,
-            key="project_selector"
+        df = pd.DataFrame(projects_data)
+        
+        # Display in a dataframe
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Selection for editing
+        selected_project_id = st.selectbox(
+            "Select a project to edit:",
+            options=[p.id for p in projects],
+            format_func=lambda x: next((p.name for p in projects if p.id == x), ""),
         )
         
-        if selected_project:
-            st.session_state.selected_project_id = selected_project.id
-            
-            # Display project summary
-            st.markdown(f"**Status:** {selected_project.status}")
-            st.markdown(f"**Project Manager:** {selected_project.project_manager_name or 'Not assigned'}")
-            st.markdown(f"**Lead Team:** {selected_project.lead_team_name or 'Not assigned'}")
-            
-            # Display timeline
-            st.markdown("### Project Timeline")
-            fig = create_project_gantt([selected_project])
-            st.plotly_chart(prepare_figure_for_streamlit(fig), use_container_width=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Edit Selected Project", use_container_width=True):
+                st.session_state.show_project_form = True
+                st.session_state.editing_project = next((p for p in projects if p.id == selected_project_id), None)
+                st.rerun()
+        
+        with col2:
+            if st.button("Delete Selected Project", use_container_width=True):
+                # Confirm deletion
+                st.session_state.confirm_delete_project = selected_project_id
+                st.rerun()
     else:
-        st.info("No projects found matching the selected criteria. Click 'Add New Project' to create one.")
+        st.info("No projects found. Add some projects to get started.")
+    
+    # Handle delete confirmation
+    if "confirm_delete_project" in st.session_state and st.session_state.confirm_delete_project:
+        project_id = st.session_state.confirm_delete_project
+        project = next((p for p in projects if p.id == project_id), None)
+        
+        if project:
+            st.warning(f"Are you sure you want to delete the project {project.name}?")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Yes, Delete", type="primary"):
+                    if db.delete_project(project_id):
+                        st.success("Project deleted successfully!")
+                        st.session_state.confirm_delete_project = None
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete project.")
+            
+            with col2:
+                if st.button("Cancel"):
+                    st.session_state.confirm_delete_project = None
+                    st.rerun()
+    
+    # Show form for adding/editing a project
+    if "show_project_form" in st.session_state and st.session_state.show_project_form:
+        render_project_form(st.session_state.editing_project)
 
-def render_project_details():
-    """Render the details and edit form for the selected project."""
-    if st.session_state.selected_project_id == "new":
-        today = date.today()
-        project = Project(
-            name="",
-            description="",
-            start_date=today,
-            end_date=today + timedelta(days=90),
-            status="planning",
-            id=None
-        )
-        st.subheader("New Project")
+def render_project_timeline():
+    """Render a timeline view of projects."""
+    # Get date range from session state
+    start_date, end_date = st.session_state.date_range
+    
+    # Get all projects
+    projects = db.get_projects()
+    
+    if not projects:
+        st.info("No projects found. Add some projects to see the timeline.")
+        return
+    
+    # Filter projects by date if needed
+    if start_date and end_date:
+        filtered_projects = [
+            p for p in projects 
+            if (p.end_date and p.end_date >= start_date) and 
+               (p.start_date and p.start_date <= end_date)
+        ]
     else:
-        project = db.get_project(st.session_state.selected_project_id)
-        if not project:
-            st.error("Selected project not found")
-            return
-        st.subheader(f"Project: {project.name}")
+        filtered_projects = projects
     
-    # Create tabs for different sections
-    tab1, tab2, tab3 = st.tabs(["Project Details", "Demands", "Allocations"])
+    if not filtered_projects:
+        st.info("No projects found in the selected date range.")
+        return
     
-    with tab1:
-        render_project_form(project)
+    # Create Gantt chart
+    fig = create_project_gantt(filtered_projects)
     
-    with tab2:
-        if project.id:  # Only show demands for existing projects
-            render_project_demands(project)
-            
-            # Add demand management
-            st.markdown("---")
-            st.subheader("Add New Demand")
-            with st.form("add_demand_form"):
-                role = st.text_input("Role Required")
-                fte = st.number_input("FTE Required", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_date = st.date_input("Start Date", value=date.today())
-                with col2:
-                    end_date = st.date_input("End Date", value=date.today() + timedelta(days=90))
-                priority = st.selectbox("Priority", options=["high", "medium", "low"])
-                
-                if st.form_submit_button("Add Demand"):
-                    if not role:
-                        st.error("Role is required")
-                    elif end_date < start_date:
-                        st.error("End date must be after start date")
-                    else:
-                        if db.save_demand(project.id, role, fte, start_date, end_date, priority):
-                            st.success("Demand added successfully")
-                            st.rerun()
-                        else:
-                            st.error("Failed to add demand")
-    
-    with tab3:
-        if project.id:  # Only show allocations for existing projects
-            render_project_allocations(project)
-            
-            # Add allocation management
-            st.markdown("---")
-            st.subheader("Add New Allocation")
-            with st.form("add_allocation_form"):
-                # Get available people
-                people = db.get_people()
-                person = st.selectbox(
-                    "Person",
-                    options=people,
-                    format_func=lambda x: x.name
-                )
-                
-                fte = st.number_input("FTE Allocated", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_date = st.date_input("Start Date", value=date.today())
-                with col2:
-                    end_date = st.date_input("End Date", value=date.today() + timedelta(days=90))
-                notes = st.text_area("Notes")
-                
-                if st.form_submit_button("Add Allocation"):
-                    if end_date < start_date:
-                        st.error("End date must be after start date")
-                    else:
-                        if db.save_allocation(project.id, person.id, fte, start_date, end_date, notes):
-                            st.success("Allocation added successfully")
-                            st.rerun()
-                        else:
-                            st.error("Failed to add allocation")
+    # Display the chart
+    st.plotly_chart(prepare_figure_for_streamlit(fig), use_container_width=True)
 
-def render_project_form(project):
-    """Render the form for adding or editing a project."""
-    with st.form("project_form"):
-        name = st.text_input("Project Name", value=project.name)
-        description = st.text_area("Description", value=project.description or "", height=100)
+def render_project_form(project=None):
+    """Render a form for adding or editing a project."""
+    is_edit = project is not None
+    form_title = "Edit Project" if is_edit else "Add New Project"
+    
+    st.subheader(form_title)
+    
+    with st.form(key="project_form"):
+        # Form inputs
+        name = st.text_input("Project Name", value=project.name if is_edit else "")
+        description = st.text_area("Description", value=project.description if is_edit else "")
         
         # Get teams for selection
         teams = db.get_teams()
@@ -182,10 +162,11 @@ def render_project_form(project):
         with col1:
             # Project Manager dropdown
             selected_manager_index = 0
-            for i, (person_id, _) in enumerate(manager_options):
-                if project.project_manager_id == person_id:
-                    selected_manager_index = i
-                    break
+            if is_edit:
+                for i, (person_id, _) in enumerate(manager_options):
+                    if project.project_manager_id == person_id:
+                        selected_manager_index = i
+                        break
             
             project_manager = st.selectbox(
                 "Project Manager",
@@ -195,14 +176,15 @@ def render_project_form(project):
             )
             project_manager_id = manager_options[project_manager][0] if project_manager is not None else None
             
-            project_type = st.text_input("Project Type", value=project.project_type or "")
+            project_type = st.text_input("Project Type", value=project.project_type if is_edit else "")
             
             # Team dropdown
             selected_team_index = 0
-            for i, (team_id, _) in enumerate(team_options):
-                if team_id == project.lead_team_id:
-                    selected_team_index = i
-                    break
+            if is_edit:
+                for i, (team_id, _) in enumerate(team_options):
+                    if project.lead_team_id == team_id:
+                        selected_team_index = i
+                        break
             
             lead_team = st.selectbox(
                 "Lead Team",
@@ -211,106 +193,69 @@ def render_project_form(project):
                 index=selected_team_index
             )
             lead_team_id = team_options[lead_team][0] if lead_team is not None else None
-            
-            start_date = st.date_input("Start Date", value=project.start_date)
         
         with col2:
-            end_date = st.date_input("End Date", value=project.end_date)
-            
+            # Status dropdown
+            status_options = ["planning", "active", "completed", "cancelled"]
             status = st.selectbox(
                 "Status",
-                options=["planning", "active", "completed", "cancelled"],
-                index=["planning", "active", "completed", "cancelled"].index(project.status) if project.status else 0
+                options=status_options,
+                index=status_options.index(project.status) if is_edit else 0
+            )
+            
+            # Date inputs
+            start_date = st.date_input(
+                "Start Date",
+                value=project.start_date if is_edit else date.today()
+            )
+            end_date = st.date_input(
+                "End Date",
+                value=project.end_date if is_edit else date.today() + timedelta(days=90)
             )
         
-        col1, col2 = st.columns([1, 4])
+        col1, col2 = st.columns(2)
         with col1:
-            submitted = st.form_submit_button("Save Project")
+            submit_button = st.form_submit_button("Save", use_container_width=True)
         with col2:
-            if st.form_submit_button("Cancel"):
-                st.session_state.selected_project_id = None
-                st.rerun()
+            cancel_button = st.form_submit_button("Cancel", use_container_width=True)
         
-        if submitted:
+        if submit_button:
             if not name:
                 st.error("Project name is required")
             elif end_date < start_date:
                 st.error("End date must be after start date")
             else:
-                # Create or update the project object
-                project.name = name
-                project.description = description
-                project.start_date = start_date
-                project.end_date = end_date
-                project.status = status
-                project.project_manager_id = project_manager_id
-                project.project_type = project_type
-                project.lead_team_id = lead_team_id
-                
-                # Save to database
-                project_id = db.save_project(project)
+                # Create or update project
+                if is_edit:
+                    project.name = name
+                    project.description = description
+                    project.project_manager_id = project_manager_id
+                    project.project_type = project_type
+                    project.lead_team_id = lead_team_id
+                    project.status = status
+                    project.start_date = start_date
+                    project.end_date = end_date
+                    project_id = db.save_project(project)
+                else:
+                    new_project = Project(
+                        name=name,
+                        description=description,
+                        project_manager_id=project_manager_id,
+                        project_type=project_type,
+                        lead_team_id=lead_team_id,
+                        status=status,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    project_id = db.save_project(new_project)
                 
                 if project_id:
-                    st.success("Project saved successfully")
-                    if project.id is None:  # New project
-                        st.session_state.selected_project_id = project_id
-                        st.rerun()
+                    st.success("Project saved successfully!")
+                    st.session_state.show_project_form = False
+                    st.rerun()
                 else:
                     st.error("Failed to save project")
-
-def render_project_demands(project):
-    """Render demands for a specific project."""
-    demands = db.get_demands(project_id=project.id)
-    
-    if demands:
-        demands_data = []
-        for demand in demands:
-            demands_data.append({
-                "Role Required": demand.role_required,
-                "FTE Required": demand.fte_required,
-                "Start Date": demand.start_date,
-                "End Date": demand.end_date,
-                "Status": demand.status,
-                "Priority": demand.priority,
-                "Actions": "Delete" if st.button(f"Delete {demand.role_required}", key=f"delete_demand_{demand.id}") else ""
-            })
-            
-            if demands_data[-1]["Actions"] == "Delete":
-                if db.delete_demand(demand.id):
-                    st.success(f"Deleted demand for {demand.role_required}")
-                    st.rerun()
-                else:
-                    st.error(f"Failed to delete demand for {demand.role_required}")
         
-        df = pd.DataFrame(demands_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No demands found for this project")
-
-def render_project_allocations(project):
-    """Render allocations for a specific project."""
-    allocations = db.get_allocations(project_id=project.id)
-    
-    if allocations:
-        allocations_data = []
-        for allocation in allocations:
-            allocations_data.append({
-                "Person": allocation.person_name,
-                "FTE": allocation.fte_allocated,
-                "Start Date": allocation.start_date,
-                "End Date": allocation.end_date,
-                "Notes": allocation.notes,
-                "Actions": "Delete" if st.button(f"Delete {allocation.person_name}", key=f"delete_allocation_{allocation.id}") else ""
-            })
-            
-            if allocations_data[-1]["Actions"] == "Delete":
-                if db.delete_allocation(allocation.id):
-                    st.success(f"Deleted allocation for {allocation.person_name}")
-                    st.rerun()
-                else:
-                    st.error(f"Failed to delete allocation for {allocation.person_name}")
-        
-        df = pd.DataFrame(allocations_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No allocations found for this project") 
+        if cancel_button:
+            st.session_state.show_project_form = False
+            st.rerun() 

@@ -8,11 +8,28 @@ def render_teams_view():
     """Render the teams management view."""
     st.header("Teams Management")
     
-    # Get all teams
+    # Create tabs for different actions
+    tab1, tab2 = st.tabs(["Team List", "Team Members"])
+    
+    with tab1:
+        render_team_list()
+    
+    with tab2:
+        render_team_members_view()
+
+def render_team_list():
+    """Render a list of teams with actions."""
+    # Add a button to create a new team
+    if st.button("Add New Team", key="add_team_button"):
+        st.session_state.show_team_form = True
+        st.session_state.editing_team = None
+    
+    # Get all teams for display
     teams = db.get_teams()
     
-    # Display teams in a table
+    # Display teams in a dataframe
     if teams:
+        # Convert to dataframe for display
         teams_data = []
         for team in teams:
             members = db.get_people(team_id=team.id)
@@ -24,91 +41,119 @@ def render_teams_view():
             })
         
         df = pd.DataFrame(teams_data)
+        
+        # Display in a dataframe
         st.dataframe(df, use_container_width=True, hide_index=True)
         
-        # Add actions section
-        st.subheader("Actions")
-        
-        # Create a selectbox for team selection
-        selected_team = st.selectbox(
-            "Select Team",
-            options=teams,
-            format_func=lambda x: x.name,
-            key="team_selector"
+        # Selection for editing
+        selected_team_id = st.selectbox(
+            "Select a team to edit:",
+            options=[t.id for t in teams],
+            format_func=lambda x: next((t.name for t in teams if t.id == x), ""),
         )
         
-        # Add buttons for actions
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Edit Team"):
-                st.session_state.edit_team_id = selected_team.id
+            if st.button("Edit Selected Team", use_container_width=True):
+                st.session_state.show_team_form = True
+                st.session_state.editing_team = next((t for t in teams if t.id == selected_team_id), None)
                 st.rerun()
+        
         with col2:
-            if st.button("View Members"):
-                render_team_members(selected_team)
+            if st.button("Delete Selected Team", use_container_width=True):
+                # Confirm deletion
+                st.session_state.confirm_delete_team = selected_team_id
+                st.rerun()
     else:
-        st.info("No teams found. Add a team to get started.")
+        st.info("No teams found. Add some teams to get started.")
     
-    # Add New Team button
-    if st.button("Add New Team"):
-        st.session_state.edit_team_id = "new"
-        st.rerun()
+    # Handle delete confirmation
+    if "confirm_delete_team" in st.session_state and st.session_state.confirm_delete_team:
+        team_id = st.session_state.confirm_delete_team
+        team = next((t for t in teams if t.id == team_id), None)
+        
+        if team:
+            st.warning(f"Are you sure you want to delete the team {team.name}?")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Yes, Delete", type="primary"):
+                    if db.delete_team(team_id):
+                        st.success("Team deleted successfully!")
+                        st.session_state.confirm_delete_team = None
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete team.")
+            
+            with col2:
+                if st.button("Cancel"):
+                    st.session_state.confirm_delete_team = None
+                    st.rerun()
     
-    # Show edit form if in edit mode
-    if "edit_team_id" in st.session_state and st.session_state.edit_team_id:
-        render_team_form()
+    # Show form for adding/editing a team
+    if "show_team_form" in st.session_state and st.session_state.show_team_form:
+        render_team_form(st.session_state.editing_team)
 
-def render_team_form():
-    """Render the form for adding or editing a team."""
-    # Add clear button at the top of the form if in edit mode
-    if st.session_state.edit_team_id != "new":
-        if st.button("Clear Form (Add New Team)"):
-            st.session_state.edit_team_id = "new"
-            st.rerun()
+def render_team_members_view():
+    """Render a view of team members."""
+    # Get all teams
+    teams = db.get_teams()
     
-    # Initialize the team object
-    if st.session_state.edit_team_id == "new":
-        team = Team(name="", description="", id=None)
-        st.subheader("New Team")
-    else:
-        team = db.get_team(st.session_state.edit_team_id)
-        if not team:
-            st.error(f"Team with ID {st.session_state.edit_team_id} not found")
-            st.session_state.edit_team_id = None
-            st.rerun()
-            return
-        st.subheader(f"Edit Team: {team.name}")
+    if not teams:
+        st.info("No teams found. Add some teams to manage members.")
+        return
     
-    # Create the form
-    with st.form("team_form"):
-        name = st.text_input("Team Name", value=team.name)
-        description = st.text_area("Description", value=team.description or "", height=100)
+    # Team selection
+    selected_team = st.selectbox(
+        "Select Team",
+        options=teams,
+        format_func=lambda x: x.name
+    )
+    
+    if selected_team:
+        render_team_members(selected_team)
+
+def render_team_form(team=None):
+    """Render a form for adding or editing a team."""
+    is_edit = team is not None
+    form_title = "Edit Team" if is_edit else "Add New Team"
+    
+    st.subheader(form_title)
+    
+    with st.form(key="team_form"):
+        # Form inputs
+        name = st.text_input("Team Name", value=team.name if is_edit else "")
+        description = st.text_area("Description", value=team.description if is_edit else "")
         
-        col1, col2 = st.columns([1, 4])
+        col1, col2 = st.columns(2)
         with col1:
-            submitted = st.form_submit_button("Save Team")
+            submit_button = st.form_submit_button("Save", use_container_width=True)
         with col2:
-            if st.form_submit_button("Cancel"):
-                st.session_state.edit_team_id = None
-                st.rerun()
+            cancel_button = st.form_submit_button("Cancel", use_container_width=True)
         
-        if submitted:
+        if submit_button:
             if not name:
                 st.error("Team name is required")
             else:
-                # Update team object
-                team.name = name
-                team.description = description
-                
-                # Save to database
-                team_id = db.save_team(team)
+                # Create or update team
+                if is_edit:
+                    team.name = name
+                    team.description = description
+                    team_id = db.save_team(team)
+                else:
+                    new_team = Team(name=name, description=description)
+                    team_id = db.save_team(new_team)
                 
                 if team_id:
-                    st.success("Team saved successfully")
-                    st.session_state.edit_team_id = None
+                    st.success("Team saved successfully!")
+                    st.session_state.show_team_form = False
                     st.rerun()
                 else:
                     st.error("Failed to save team")
+        
+        if cancel_button:
+            st.session_state.show_team_form = False
+            st.rerun()
 
 def render_team_members(team):
     """Render the list of team members with management options."""

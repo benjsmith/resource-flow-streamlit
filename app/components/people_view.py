@@ -69,246 +69,227 @@ def save_person(person, name, role, team_id, is_new):
         st.session_state.show_error_message = "Failed to save person"
 
 def render_people_view():
-    """Render the people management view using a master-detail layout."""
+    """Render the people management view."""
     st.header("People Management")
     
-    # Initialize state variables if they don't exist
-    if "selected_person_id" not in st.session_state:
-        st.session_state.selected_person_id = None
+    # Create tabs for different actions
+    tab1, tab2 = st.tabs(["People List", "Team Assignments"])
     
-    if "editing_person" not in st.session_state:
-        st.session_state.editing_person = False
+    with tab1:
+        render_people_list()
     
-    if "confirm_delete_person" not in st.session_state:
-        st.session_state.confirm_delete_person = None
+    with tab2:
+        render_team_assignments()
+
+def render_people_list():
+    """Render a list of people with actions."""
+    # Add a button to create a new person
+    if st.button("Add New Person", key="add_person_button"):
+        st.session_state.show_person_form = True
+        st.session_state.editing_person = None
+    
+    # Get all people for display
+    people = db.get_people()
+    
+    # Display people in a dataframe
+    if people:
+        # Convert to dataframe for display
+        people_data = []
+        for person in people:
+            people_data.append({
+                "ID": person.id,
+                "Name": person.name,
+                "Role": person.role,
+                "Team": person.team_name or "No Team"
+            })
         
-    if "show_success_message" not in st.session_state:
-        st.session_state.show_success_message = None
+        df = pd.DataFrame(people_data)
         
-    if "show_error_message" not in st.session_state:
-        st.session_state.show_error_message = None
-    
-    # Display success/error messages if they exist
-    if st.session_state.show_success_message:
-        st.success(st.session_state.show_success_message)
-        st.session_state.show_success_message = None
+        # Display in a dataframe
+        st.dataframe(df, use_container_width=True, hide_index=True)
         
-    if st.session_state.show_error_message:
-        st.error(st.session_state.show_error_message)
-        st.session_state.show_error_message = None
-    
-    # Create a two-column layout - list on the left, details/edit on the right
-    col1, col2 = st.columns([3, 4])
-    
-    with col1:
-        # People list section
-        st.subheader("People")
+        # Selection for editing
+        selected_person_id = st.selectbox(
+            "Select a person to edit:",
+            options=[p.id for p in people],
+            format_func=lambda x: next((p.name for p in people if p.id == x), ""),
+        )
         
-        # Get all people
-        people = db.get_people()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Edit Selected Person", use_container_width=True):
+                st.session_state.show_person_form = True
+                st.session_state.editing_person = next((p for p in people if p.id == selected_person_id), None)
+                st.rerun()
         
-        # Create a DataFrame for display
-        if people:
-            # Add a selection dropdown for people
-            options = ["Select a person..."] + [p.name for p in people]
-            index = 0
-            
-            # If there's a selected person, make sure it's selected in the dropdown
-            if st.session_state.selected_person_id:
-                selected_person = db.get_person(st.session_state.selected_person_id)
-                if selected_person:
-                    try:
-                        index = options.index(selected_person.name)
-                    except ValueError:
-                        index = 0
-            
-            st.selectbox(
-                "Select a Person to View/Edit",
-                options=options,
-                index=index,
-                key="person_selector",
-                on_change=on_person_selected
-            )
-            
-            # Create a simple table to display all people
-            people_data = []
-            for person in people:
-                people_data.append({
-                    "Name": person.name,
-                    "Role": person.role,
-                    "Team": person.team_name or "No Team"
-                })
-            
-            df = pd.DataFrame(people_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            # Add new person button
-            st.button(
-                "➕ Add New Person", 
-                use_container_width=True, 
-                key="add_new_person_btn",
-                on_click=lambda: (clear_selection(), start_editing())
-            )
+        with col2:
+            if st.button("Delete Selected Person", use_container_width=True):
+                # Confirm deletion
+                st.session_state.confirm_delete_person = selected_person_id
+                st.rerun()
+    else:
+        st.info("No people found. Add some people to get started.")
     
-    with col2:
-        # Show delete confirmation if needed
-        if st.session_state.confirm_delete_person:
-            person_to_delete = st.session_state.confirm_delete_person
-            st.warning(f"Are you sure you want to delete {person_to_delete['name']}? This action cannot be undone.")
+    # Handle delete confirmation
+    if "confirm_delete_person" in st.session_state and st.session_state.confirm_delete_person:
+        person_id = st.session_state.confirm_delete_person
+        person = next((p for p in people if p.id == person_id), None)
+        
+        if person:
+            st.warning(f"Are you sure you want to delete {person.name}?")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.button(
-                    "Cancel", 
-                    use_container_width=True, 
-                    key="cancel_delete_btn",
-                    on_click=clear_delete_confirmation
-                )
+                if st.button("Yes, Delete", type="primary"):
+                    if db.delete_person(person_id):
+                        st.success("Person deleted successfully!")
+                        st.session_state.confirm_delete_person = None
+                        st.rerun()
+                    else:
+                        st.error("Cannot delete a person with active allocations. Please remove allocations first.")
             
             with col2:
-                st.button(
-                    "Yes, Delete", 
-                    type="primary", 
-                    use_container_width=True, 
-                    key="confirm_delete_btn",
-                    on_click=delete_person,
-                    args=(person_to_delete['id'], person_to_delete['name'])
-                )
-        
-        # Show either the detail view or edit form based on state
-        elif st.session_state.selected_person_id is not None or st.session_state.editing_person:
-            # For edit mode of existing person
-            if st.session_state.selected_person_id and st.session_state.editing_person:
-                person = db.get_person(st.session_state.selected_person_id)
-                if not person:
-                    st.error(f"Person not found")
-                    clear_selection()
-                else:
-                    render_person_form(person, is_new=False)
-            
-            # For detail view of existing person
-            elif st.session_state.selected_person_id:
-                person = db.get_person(st.session_state.selected_person_id)
-                if not person:
-                    st.error(f"Person not found")
-                    clear_selection()
-                else:
-                    render_person_details(person)
-            
-            # For adding a new person
-            else:
-                render_person_form(Person(), is_new=True)
-        
-        # Empty state
-        else:
-            st.info("Select a person from the list to view details, or click 'Add New Person' to create a new entry.")
+                if st.button("Cancel"):
+                    st.session_state.confirm_delete_person = None
+                    st.rerun()
+    
+    # Show form for adding/editing a person
+    if "show_person_form" in st.session_state and st.session_state.show_person_form:
+        render_person_form(st.session_state.editing_person)
 
-def render_person_details(person):
-    """Render the details view for a person."""
-    st.subheader(f"{person.name}")
-    
-    # Create a clean layout with key details
-    st.markdown(f"**Role:** {person.role}")
-    st.markdown(f"**Team:** {person.team_name or 'No Team'}")
-    st.markdown(f"**ID:** {person.id}")
-    
-    # Show allocations if they exist
-    allocations = db.get_allocations(person_id=person.id)
-    if allocations:
-        st.subheader("Allocations")
-        allocations_data = []
-        for allocation in allocations:
-            allocations_data.append({
-                "Project": allocation.project_name,
-                "FTE": allocation.fte_allocated,
-                "Start Date": allocation.start_date,
-                "End Date": allocation.end_date
-            })
-        
-        df = pd.DataFrame(allocations_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    # Action buttons
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.button(
-            "Edit", 
-            use_container_width=True, 
-            key="edit_person_btn",
-            on_click=start_editing
-        )
-    
-    with col2:
-        st.button(
-            "Delete", 
-            use_container_width=True, 
-            key="delete_person_btn",
-            on_click=show_delete_confirmation,
-            args=(person,)
-        )
-    
-    with col3:
-        st.button(
-            "Manage Allocations", 
-            use_container_width=True, 
-            key="manage_allocations_btn",
-            on_click=lambda: setattr(st.session_state, "sidebar_selection", "Allocations")
-        )
-
-def render_person_form(person, is_new=False):
-    """Render a form for adding/editing a person."""
-    # Set the title based on whether we're adding or editing
-    title = "Add New Person" if is_new else f"Edit: {person.name}"
-    st.subheader(title)
-    
-    # Create simple inputs instead of a form
-    name = st.text_input("Name", value=person.name, key=f"person_name_{is_new}")
-    role = st.text_input("Role", value=person.role, key=f"person_role_{is_new}")
-    
-    # Get teams for dropdown
+def render_team_assignments():
+    """Render a view of team assignments."""
+    # Get all teams
     teams = db.get_teams()
-    team_options = ["No Team"] + [team.name for team in teams]
     
-    # Find current team index
-    team_index = 0
-    if person.team_name:
-        try:
-            team_index = team_options.index(person.team_name)
-        except ValueError:
-            team_index = 0
+    if not teams:
+        st.info("No teams found. Add some teams to manage assignments.")
+        return
     
+    # Team selection
     selected_team = st.selectbox(
-        "Team", 
-        options=team_options, 
-        index=team_index,
-        key=f"person_team_{is_new}"
+        "Select Team",
+        options=teams,
+        format_func=lambda x: x.name
     )
     
-    # Convert team name to team ID
-    team_id = None
-    if selected_team != "No Team":
-        for team in teams:
-            if team.name == selected_team:
-                team_id = team.id
-                break
+    if selected_team:
+        render_team_members(selected_team)
+
+def render_person_form(person=None):
+    """Render a form for adding or editing a person."""
+    is_edit = person is not None
+    form_title = "Edit Person" if is_edit else "Add New Person"
     
-    # Form buttons
-    col1, col2 = st.columns(2)
+    st.subheader(form_title)
     
-    with col1:
-        st.button(
-            "Save", 
-            use_container_width=True,
-            key=f"save_person_btn_{is_new}",
-            on_click=save_person,
-            args=(person, name, role, team_id, is_new)
+    with st.form(key="person_form"):
+        # Form inputs
+        name = st.text_input("Name", value=person.name if is_edit else "")
+        role = st.text_input("Role", value=person.role if is_edit else "")
+        
+        # Get teams for selection
+        teams = db.get_teams()
+        team_options = [(None, "No Team")] + [(team.id, team.name) for team in teams]
+        
+        # Team dropdown
+        selected_team_index = 0
+        if is_edit:
+            for i, (team_id, _) in enumerate(team_options):
+                if person.team_id == team_id:
+                    selected_team_index = i
+                    break
+        
+        team = st.selectbox(
+            "Team",
+            options=range(len(team_options)),
+            format_func=lambda i: team_options[i][1],
+            index=selected_team_index
         )
+        team_id = team_options[team][0] if team is not None else None
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            submit_button = st.form_submit_button("Save", use_container_width=True)
+        with col2:
+            cancel_button = st.form_submit_button("Cancel", use_container_width=True)
+        
+        if submit_button:
+            if not name:
+                st.error("Name is required")
+            else:
+                # Create or update person
+                if is_edit:
+                    person.name = name
+                    person.role = role
+                    person.team_id = team_id
+                    person_id = db.save_person(person)
+                else:
+                    new_person = Person(
+                        name=name,
+                        role=role,
+                        team_id=team_id
+                    )
+                    person_id = db.save_person(new_person)
+                
+                if person_id:
+                    st.success("Person saved successfully!")
+                    st.session_state.show_person_form = False
+                    st.rerun()
+                else:
+                    st.error("Failed to save person")
+        
+        if cancel_button:
+            st.session_state.show_person_form = False
+            st.rerun()
+
+def render_team_members(team):
+    """Render the list of team members with management options."""
+    st.subheader(f"Members of {team.name}")
     
-    with col2:
-        st.button(
-            "Cancel", 
-            use_container_width=True,
-            key=f"cancel_edit_btn_{is_new}",
-            on_click=lambda: clear_selection() if is_new else setattr(st.session_state, "editing_person", False)
-        ) 
+    members = db.get_people(team_id=team.id)
+    
+    if members:
+        members_data = []
+        for member in members:
+            members_data.append({
+                "Name": member.name,
+                "Role": member.role,
+                "Actions": "Remove" if st.button(f"Remove {member.name}", key=f"remove_{member.id}") else ""
+            })
+            
+            if members_data[-1]["Actions"] == "Remove":
+                if db.update_person_team(member.id, None):
+                    st.success(f"Removed {member.name} from the team")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to remove {member.name} from the team")
+        
+        df = pd.DataFrame(members_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Add member management
+        st.markdown("---")
+        st.subheader("Add Team Member")
+        
+        # Get available people not in the team
+        all_people = db.get_people()
+        team_members = db.get_people(team_id=team.id)
+        available_people = [p for p in all_people if p not in team_members]
+        
+        if available_people:
+            with st.form("add_member_form"):
+                person = st.selectbox(
+                    "Add Team Member",
+                    options=available_people,
+                    format_func=lambda x: x.name
+                )
+                
+                if st.form_submit_button("Add to Team"):
+                    if db.update_person_team(person.id, team.id):
+                        st.success(f"Added {person.name} to the team")
+                        st.rerun()
+                    else:
+                        st.error("Failed to add team member")
+    else:
+        st.info("No team members yet") 
