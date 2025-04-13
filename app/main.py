@@ -1,8 +1,6 @@
 import streamlit as st
 import os
 import sys
-import json
-import plotly
 from datetime import date, timedelta
 
 # Add the parent directory to the Python path so 'app' can be found
@@ -16,23 +14,6 @@ from app.components.allocations_view import render_allocations_view
 from app.components.dashboard import render_dashboard
 from app.database.init_db import initialize_database
 from app.database.migrate_db import migrate_database
-
-# Fix JSON serialization for timedelta objects
-# We'll use a custom JSONEncoder that inherits from the built-in one
-class TimedeltaJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, timedelta):
-            return str(obj)
-        return super().default(obj)
-
-# Patch the json.dumps function to use our encoder
-original_dumps = json.dumps
-def patched_dumps(*args, **kwargs):
-    kwargs['cls'] = kwargs.get('cls', TimedeltaJSONEncoder)
-    return original_dumps(*args, **kwargs)
-
-# Apply the patch
-json.dumps = patched_dumps
 
 def check_database_initialization():
     """Check if the database is initialized and initialize if it doesn't exist."""

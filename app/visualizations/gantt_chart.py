@@ -7,6 +7,8 @@ import numpy as np
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 
+from app.utils.plotly_utils import preprocess_dataframe_for_plotly
+
 def create_project_gantt(projects: List) -> go.Figure:
     """
     Create a Gantt chart for projects.
@@ -32,6 +34,9 @@ def create_project_gantt(projects: List) -> go.Figure:
         }
         for project in projects
     ])
+    
+    # Preprocess DataFrame to ensure data is JSON serializable
+    df = preprocess_dataframe_for_plotly(df)
     
     # Create color mapping for status
     color_map = {
@@ -105,6 +110,9 @@ def create_demand_gantt(demands: List) -> go.Figure:
             "status": demand.status,
             "priority": demand.priority
         } for demand in demands])
+    
+    # Preprocess DataFrame to ensure data is JSON serializable
+    df = preprocess_dataframe_for_plotly(df)
     
     # Status-based color mapping
     color_map = {
@@ -208,6 +216,9 @@ def create_allocation_gantt(allocations: List) -> go.Figure:
             "notes": allocation.notes if allocation.notes else ""
         } for allocation in allocations])
     
+    # Preprocess DataFrame to ensure data is JSON serializable
+    df = preprocess_dataframe_for_plotly(df)
+    
     # Create figure using px.timeline which handles dates better
     fig = px.timeline(
         df, 
@@ -288,6 +299,9 @@ def create_heatmap(df: pd.DataFrame, x_col: str, y_col: str, value_col: str, tit
     Returns:
         go.Figure: Plotly figure with heatmap
     """
+    # Preprocess DataFrame to ensure data is JSON serializable
+    df = preprocess_dataframe_for_plotly(df)
+    
     # Pivot data for heatmap
     pivot_df = df.pivot_table(
         values=value_col,

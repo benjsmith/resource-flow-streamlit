@@ -37,22 +37,56 @@ def get_db_connection(read_only: bool = False):
         DuckDB connection
     """
     db_path = "resource_flow.duckdb"
-    max_retries = 3
-    retry_delay = 0.1  # seconds
+    max_retries = 5
+    retry_delay = 0.2  # seconds
     conn = None
     
+    # Track active connections to ensure proper cleanup
+    if not hasattr(get_db_connection, "active_connections"):
+        get_db_connection.active_connections = []
+    
+    # Try to remove any dead connections
+    for existing_conn in list(get_db_connection.active_connections):
+        try:
+            # Check if connection is still open by attempting a simple query
+            existing_conn.execute("SELECT 1")
+        except:
+            # Connection is dead, remove it from our list
+            try:
+                existing_conn.close()
+            except:
+                pass
+            if existing_conn in get_db_connection.active_connections:
+                get_db_connection.active_connections.remove(existing_conn)
+    
+    # Try to get a new connection
     for attempt in range(max_retries):
         try:
             conn = duckdb.connect(db_path, read_only=read_only)
+            get_db_connection.active_connections.append(conn)
             break
         except duckdb.IOException as e:
             if "Conflicting lock" in str(e) and attempt < max_retries - 1:
                 if conn:
                     try:
                         conn.close()
+                        if conn in get_db_connection.active_connections:
+                            get_db_connection.active_connections.remove(conn)
                     except:
                         pass
-                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                continue
+            raise
+        except duckdb.ConnectionException as e:
+            if "different configuration than existing connections" in str(e) and attempt < max_retries - 1:
+                # Clear all connections and try again
+                for existing_conn in list(get_db_connection.active_connections):
+                    try:
+                        existing_conn.close()
+                    except:
+                        pass
+                get_db_connection.active_connections = []
+                time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
                 continue
             raise
     
@@ -65,6 +99,8 @@ def get_db_connection(read_only: bool = False):
         if conn:
             try:
                 conn.close()
+                if conn in get_db_connection.active_connections:
+                    get_db_connection.active_connections.remove(conn)
             except:
                 pass
 
@@ -1138,4 +1174,33 @@ def update_monthly_allocations(conn) -> None:
     """Update the monthly_demand_allocation table with current data."""
     # This function will be implemented in the init_db.py file
     # and will be called whenever demand or allocation data changes
-    compute_monthly_allocations(conn) 
+    compute_monthly_allocations(conn)
+
+@with_connection(read_only=True)
+def get_allocations_by_project(conn) -> List[Dict[str, Any]]:
+    """
+    Get allocations grouped by project.
+    
+    Returns:
+        List of dictionaries containing project allocation data
+    """
+    query = """
+        SELECT 
+            p.id AS project_id,
+            p.name AS project_name,
+            COUNT(DISTINCT a.person_id) AS num_people,
+            SUM(a.fte_allocated) AS total_fte
+        FROM projects p
+        LEFT JOIN allocations a ON p.id = a.project_id
+        GROUP BY p.id, p.name
+        ORDER BY p.name
+    """
+    
+    result = conn.execute(query).fetchall()
+    
+    return [{
+        "project_id": row[0],
+        "project_name": row[1],
+        "num_people": row[2],
+        "total_fte": row[3]
+    } for row in result] 

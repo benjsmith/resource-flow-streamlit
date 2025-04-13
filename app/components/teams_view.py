@@ -8,114 +8,95 @@ def render_teams_view():
     """Render the teams management view."""
     st.header("Teams Management")
     
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Teams List", "Add/Edit Team"])
-    
-    with tab1:
-        render_teams_list()
-    
-    with tab2:
-        render_teams_form()
-
-def render_teams_list():
-    """Render the list of teams with actions."""
     # Get all teams
     teams = db.get_teams()
     
+    # Display teams in a table
     if teams:
-        # Convert to DataFrame for display
         teams_data = []
         for team in teams:
+            members = db.get_people(team_id=team.id)
             teams_data.append({
                 "ID": team.id,
                 "Name": team.name,
-                "Description": team.description
+                "Description": team.description,
+                "Members": len(members)
             })
         
         df = pd.DataFrame(teams_data)
-        
-        # Display the data
         st.dataframe(df, use_container_width=True, hide_index=True)
         
-        # Add section for actions
+        # Add actions section
         st.subheader("Actions")
-        col1, col2, col3 = st.columns(3)
         
+        # Create a selectbox for team selection
+        selected_team = st.selectbox(
+            "Select Team",
+            options=teams,
+            format_func=lambda x: x.name,
+            key="team_selector"
+        )
+        
+        # Add buttons for actions
+        col1, col2 = st.columns(2)
         with col1:
-            selected_team_id = st.selectbox(
-                "Select Team", 
-                options=[t.id for t in teams],
-                format_func=lambda x: next((t.name for t in teams if t.id == x), "")
-            )
-        
-        with col2:
-            if st.button("View Team Members"):
-                team = next((t for t in teams if t.id == selected_team_id), None)
-                if team:
-                    render_team_members(team)
-        
-        with col3:
             if st.button("Edit Team"):
-                # Set the team ID for editing and switch to the edit tab
-                st.session_state.edit_team_id = selected_team_id
+                st.session_state.edit_team_id = selected_team.id
                 st.rerun()
+        with col2:
+            if st.button("View Members"):
+                render_team_members(selected_team)
     else:
-        st.info("No teams found. Add some teams to get started.")
-
-def render_team_members(team):
-    """Render members of a specific team."""
-    st.subheader(f"Members of {team.name}")
+        st.info("No teams found. Add a team to get started.")
     
-    # Get team members
-    people = db.get_people(team_id=team.id)
+    # Add New Team button
+    if st.button("Add New Team"):
+        st.session_state.edit_team_id = "new"
+        st.rerun()
     
-    if people:
-        # Convert to DataFrame for display
-        team_people = []
-        for person in people:
-            team_people.append({
-                "ID": person.id,
-                "Name": person.name,
-                "Role": person.role
-            })
-        
-        df = pd.DataFrame(team_people)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info(f"No members found in team {team.name}")
+    # Show edit form if in edit mode
+    if "edit_team_id" in st.session_state and st.session_state.edit_team_id:
+        render_team_form()
 
-def render_teams_form():
+def render_team_form():
     """Render the form for adding or editing a team."""
-    # Check if we're editing an existing team
-    edit_mode = "edit_team_id" in st.session_state and st.session_state.edit_team_id is not None
+    # Add clear button at the top of the form if in edit mode
+    if st.session_state.edit_team_id != "new":
+        if st.button("Clear Form (Add New Team)"):
+            st.session_state.edit_team_id = "new"
+            st.rerun()
     
-    if edit_mode:
+    # Initialize the team object
+    if st.session_state.edit_team_id == "new":
+        team = Team(name="", description="", id=None)
+        st.subheader("New Team")
+    else:
         team = db.get_team(st.session_state.edit_team_id)
         if not team:
             st.error(f"Team with ID {st.session_state.edit_team_id} not found")
+            st.session_state.edit_team_id = None
+            st.rerun()
             return
         st.subheader(f"Edit Team: {team.name}")
-    else:
-        # Create a new team object
-        team = Team(
-            name="",
-            description="",
-            id=None
-        )
-        st.subheader("Add New Team")
     
-    # Create a form for the team details
+    # Create the form
     with st.form("team_form"):
         name = st.text_input("Team Name", value=team.name)
-        description = st.text_area("Description", value=team.description, height=100)
+        description = st.text_area("Description", value=team.description or "", height=100)
         
-        submitted = st.form_submit_button("Save Team")
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            submitted = st.form_submit_button("Save Team")
+        with col2:
+            if st.form_submit_button("Cancel"):
+                st.session_state.edit_team_id = None
+                st.rerun()
         
         if submitted:
             if not name:
                 st.error("Team name is required")
             else:
-                # Create or update the team object
+                # Update team object
                 team.name = name
                 team.description = description
                 
@@ -123,12 +104,59 @@ def render_teams_form():
                 team_id = db.save_team(team)
                 
                 if team_id:
-                    action = "updated" if edit_mode else "added"
-                    st.success(f"Team {action} successfully")
-                    
-                    # Clear the edit team ID
-                    if edit_mode:
-                        st.session_state.edit_team_id = None
-                        st.rerun()
+                    st.success("Team saved successfully")
+                    st.session_state.edit_team_id = None
+                    st.rerun()
                 else:
-                    st.error("Failed to save team") 
+                    st.error("Failed to save team")
+
+def render_team_members(team):
+    """Render the list of team members with management options."""
+    st.subheader(f"Members of {team.name}")
+    
+    members = db.get_people(team_id=team.id)
+    
+    if members:
+        members_data = []
+        for member in members:
+            members_data.append({
+                "Name": member.name,
+                "Role": member.role,
+                "Actions": "Remove" if st.button(f"Remove {member.name}", key=f"remove_{member.id}") else ""
+            })
+            
+            if members_data[-1]["Actions"] == "Remove":
+                if db.update_person_team(member.id, None):
+                    st.success(f"Removed {member.name} from the team")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to remove {member.name} from the team")
+        
+        df = pd.DataFrame(members_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Add member management
+        st.markdown("---")
+        st.subheader("Add Team Member")
+        
+        # Get available people not in the team
+        all_people = db.get_people()
+        team_members = db.get_people(team_id=team.id)
+        available_people = [p for p in all_people if p not in team_members]
+        
+        if available_people:
+            with st.form("add_member_form"):
+                person = st.selectbox(
+                    "Add Team Member",
+                    options=available_people,
+                    format_func=lambda x: x.name
+                )
+                
+                if st.form_submit_button("Add to Team"):
+                    if db.update_person_team(person.id, team.id):
+                        st.success(f"Added {person.name} to the team")
+                        st.rerun()
+                    else:
+                        st.error("Failed to add team member")
+    else:
+        st.info("No team members yet") 

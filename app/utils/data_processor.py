@@ -181,24 +181,28 @@ def merge_dataframes(left_df: pl.DataFrame,
     """
     return left_df.join(right_df, on=on, how=how)
 
-def classify_gap(gap: float) -> str:
+def classify_gap(gap: float, capacity: float) -> str:
     """
-    Classify a resource gap
+    Classify a resource gap based on the gap value and total capacity.
     
     Args:
         gap (float): Resource gap value
+        capacity (float): Total capacity value
         
     Returns:
-        str: Classification ('surplus', 'balanced', 'deficit', 'critical')
+        str: Classification of the gap ("optimal", "overallocated", or "underallocated")
     """
-    if gap >= 0.5:
-        return "surplus"
-    elif gap >= -0.1:
-        return "balanced"
-    elif gap >= -0.5:
-        return "deficit"
+    if capacity == 0:
+        return "unknown"
+    
+    ratio = gap / capacity
+    
+    if ratio > 0.1:  # More than 10% over capacity
+        return "overallocated"
+    elif ratio < -0.1:  # More than 10% under capacity
+        return "underallocated"
     else:
-        return "critical"
+        return "optimal"
 
 def add_gap_classification(df: pl.DataFrame, gap_column: str) -> pl.DataFrame:
     """

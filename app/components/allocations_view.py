@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from app.database import queries as db
 from app.models.data_models import Allocation
 from app.visualizations.gantt_chart import create_allocation_gantt
+from app.utils.plotly_utils import prepare_figure_for_streamlit
 
 def render_allocations_view():
     """
@@ -139,7 +140,7 @@ def render_allocation_timeline():
     fig = create_allocation_gantt(allocations)
     
     # Display the chart
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(prepare_figure_for_streamlit(fig), use_container_width=True)
 
 def render_allocation_form():
     """Render the form for adding or editing an allocation."""
